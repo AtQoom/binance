@@ -3,6 +3,8 @@ import threading
 import time
 from strategy import handle_signal, strategy_loop
 from state import init_state
+from gateio_api import get_server_timestamp, get_headers, BASE_URL, SYMBOL, safe_json_dumps  # ✅ 추가
+import requests  # ✅ 요청도 필요
 
 app = Flask(__name__)
 init_state()
@@ -20,8 +22,7 @@ def webhook():
         print(f"[ERROR] 웹훅 처리 실패: {e}")
         return jsonify({"error": "internal error"}), 500
 
-# ✅ 1. 먼저 set_leverage 함수 정의 (최상단 또는 다른 함수들과 같이)
-
+# ✅ 1. set_leverage 정의 (이건 유지)
 def set_leverage(leverage=13):
     endpoint = f"/futures/usdt/positions/{SYMBOL}/leverage"
     body = safe_json_dumps({
@@ -36,9 +37,8 @@ def set_leverage(leverage=13):
     except Exception as e:
         print("[❌ 레버리지 설정 실패]", e)
 
-# ✅ 2. 그 아래쪽에 호출 위치 있어야 함
-
+# ✅ 2. 실행 시점에 호출
 if __name__ == "__main__":
-    set_leverage(leverage=13)  # 🔥 이게 함수 정의보다 아래에 위치해야 오류 없음!
-    threading.Thread(target=check_tp_sl_loop, daemon=True).start()
+    set_leverage(leverage=13)  # ✅ 실행할 때 레버리지 설정
+    threading.Thread(target=strategy_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=8080)
