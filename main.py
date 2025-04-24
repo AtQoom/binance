@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import threading
 import time
+from strategy import strategy_loop
 
 # ✅ gateio_api에서 필요한 함수/상수만 가져옴
 from gateio_api import (
@@ -91,6 +92,7 @@ def check_tp_sl_loop(interval=3):
 
 # ✅ 서버 실행부
 if __name__ == "__main__":
-    set_leverage()  # 시작 시 레버리지 13배로 설정
+    set_leverage()
     threading.Thread(target=check_tp_sl_loop, daemon=True).start()
+    threading.Thread(target=strategy_loop, daemon=True).start()  # ✅ 전략 루프도 병렬 실행
     app.run(host="0.0.0.0", port=8080)
