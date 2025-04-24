@@ -78,20 +78,6 @@ def get_position_size():
         print(f"[ERROR] 포지션 조회 실패: {e}")
     return 0
 
-def set_leverage(leverage=13):
-    endpoint = f"/futures/usdt/positions/{SYMBOL}/leverage"
-    body = safe_json_dumps({
-        "leverage": leverage,
-        "cross_leverage_limit": 0  # 0이면 격리모드 (교차 아님)
-    })
-    timestamp = get_server_timestamp()
-    headers = get_headers("POST", endpoint, timestamp, body=body)
-    try:
-        r = requests.post(BASE_URL + endpoint, headers=headers, data=body, timeout=10)
-        print("[📌 레버리지 설정 응답]", r.status_code, r.text)
-    except Exception as e:
-        print("[❌ 레버리지 설정 실패]", e)
-
 def place_order(side, qty, reduce_only=False):
     price = get_market_price()
     if price == 0:
