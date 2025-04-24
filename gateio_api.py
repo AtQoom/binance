@@ -24,6 +24,10 @@ def get_equity():
         endpoint = "/futures/usdt/accounts"
         headers = get_headers("GET", endpoint)
         r = requests.get(BASE_URL + endpoint, headers=headers, timeout=10)
+
+        print("[DEBUG] 잔고 API 응답 상태:", r.status_code)
+        print("[DEBUG] 잔고 API 응답 내용:", r.text)  # 👈 여기 중요!
+
         if r.status_code == 200:
             return float(r.json()["available"])
     except Exception as e:
