@@ -14,24 +14,24 @@ def safe_json_dumps(obj):
         return ""
 
 # ✅ Gate.io 서버 시간 가져오기
-def get_server_timestamp_ms():
+def get_server_timestamp():
     try:
         r = requests.get("https://api.gateio.ws/api/v4/timestamp", timeout=5)
         if r.status_code == 200:
-            return str(int(r.text) * 1000)  # 초 → 밀리초
+            return str(int(r.text))  # ✅ 초 단위로 그대로!
     except Exception as e:
         print(f"[ERROR] 서버 시간 조회 실패: {e}")
-    return str(int(time.time() * 1000))  # fallback
+    return str(int(time.time()))  # fallback: 초 단위
 
 # ✅ timestamp 외부에서 받아 사용
 def get_headers(method, endpoint, timestamp, query="", body=""):
     full_path = f"/api/v4{endpoint}"
     hashed_payload = hashlib.sha512((body or "").encode('utf-8')).hexdigest()
-    sign_str = f"{method.upper()}\n{full_path}\n{query}\n{hashed_payload}\n{timestamp}"
+    sign_str = f"{method.upper()}\n{full_path}\n{query}\n{hashed_payload}\n{timestamp}"  # ✅ 여기는 그대로
     sign = hmac.new(API_SECRET.encode(), sign_str.encode(), hashlib.sha512).hexdigest()
     return {
         "KEY": API_KEY,
-        "Timestamp": timestamp,
+        "Timestamp": timestamp,  # ✅ 초 단위로 보내기
         "SIGN": sign,
         "Content-Type": "application/json",
         "Accept": "application/json"
