@@ -31,15 +31,24 @@ def handle_signal(signal, strength):
             "entry_round": 0
         }
 
-    # 신규 진입
+    # 잔고 및 가격 조회
     equity = get_equity()
     price = get_market_price()
     if equity == 0 or price == 0:
+        print(f"[❌ 주문 불가] 잔고: {equity}, 시세: {price}")
         return {"error": "잔고 또는 시세 오류"}
 
-    qty = max(int((equity * RISK_PCT * LEVERAGE * strength) / price), MIN_QTY)
+    # 최초 전체 시드 저장
+    if "initial_equity" not in state or state["initial_equity"] == 0:
+        state["initial_equity"] = equity
+        print(f"[INIT] 최초 전체 시드 저장: {equity}")
+
+    # 항상 최초 시드 기준 10% 진입
+    qty = max(int((state["initial_equity"] * RISK_PCT * LEVERAGE * strength) / price), MIN_QTY)
+    print(f"[🚀 주문 준비] 방향: {incoming_side}, 수량: {qty}, 시세: {price}, 기준시드: {state['initial_equity']}")
     place_order(incoming_side, qty)
 
+    # 상태 저장
     state["side"] = incoming_side
     state["entry_price"] = price
     state["qty"] += qty
