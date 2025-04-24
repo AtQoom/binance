@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify
 import threading
 import time
+import json
+import requests
+
 from strategy import handle_signal, strategy_loop
 from state import init_state
-from gateio_api import get_server_timestamp, get_headers, BASE_URL, SYMBOL, safe_json_dumps  # ✅ 추가
-import requests  # ✅ 요청도 필요
+from gateio_api import get_server_timestamp, get_headers, BASE_URL, SYMBOL, safe_json_dumps
 
 app = Flask(__name__)
 init_state()
@@ -22,23 +24,29 @@ def webhook():
         print(f"[ERROR] 웹훅 처리 실패: {e}")
         return jsonify({"error": "internal error"}), 500
 
-# ✅ 1. set_leverage 정의 (이건 유지)
+# ✅ 실행 시 13배 격리모드 설정
 def set_leverage(leverage=13):
     endpoint = f"/futures/usdt/positions/{SYMBOL}/leverage"
-    body = safe_json_dumps({
+    payload = {
         "leverage": leverage,
-        "cross_leverage_limit": 0
-    })
+        "cross_leverage_limit": 0  # 0이면 격리 모드
+    }
     timestamp = get_server_timestamp()
-    headers = get_headers("POST", endpoint, timestamp, body=body)
+    headers = get_headers("POST", endpoint, timestamp, body=json.dumps(payload))
+    
     try:
-        r = requests.post(BASE_URL + endpoint, headers=headers, data=body, timeout=10)
+        r = requests.post(
+            BASE_URL + endpoint,
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=10
+        )
         print("[📌 레버리지 설정 응답]", r.status_code, r.text)
     except Exception as e:
         print("[❌ 레버리지 설정 실패]", e)
 
-# ✅ 2. 실행 시점에 호출
+# ✅ 전략 루프 실행
 if __name__ == "__main__":
-    set_leverage(leverage=13)  # ✅ 실행할 때 레버리지 설정
+    set_leverage(leverage=13)  # 🔥 최초 실행 시 13배 격리 설정
     threading.Thread(target=strategy_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=8080)
