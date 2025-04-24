@@ -8,15 +8,27 @@ MIN_ORDER_USDT = 3
 MIN_QTY = 1
 LEVERAGE = 6
 
+def get_server_time():
+    try:
+        r = requests.get("https://api.gateio.ws/api/v4/timestamp")
+        if r.status_code == 200:
+            return str(int(r.text) * 1000)  # 서버는 초 단위 → ms 변환
+    except Exception as e:
+        print(f"[ERROR] 서버 시간 조회 실패: {e}")
+    return str(int(time.time() * 1000))  # 실패 시 로컬 시간 fallback
+
 def get_headers(method, endpoint, query="", body=""):
-    timestamp = str(int(time.time() * 1000))
+    timestamp = get_server_time()  # ← Gate.io 서버 시간 기준으로 변경
     full_path = f"/api/v4{endpoint}"
     hashed_payload = hashlib.sha512((body or "").encode('utf-8')).hexdigest()
     sign_str = f"{method.upper()}\n{full_path}\n{query}\n{hashed_payload}\n{timestamp}"
     sign = hmac.new(API_SECRET.encode(), sign_str.encode(), hashlib.sha512).hexdigest()
     return {
-        "KEY": API_KEY, "Timestamp": timestamp, "SIGN": sign,
-        "Content-Type": "application/json", "Accept": "application/json"
+        "KEY": API_KEY,
+        "Timestamp": timestamp,
+        "SIGN": sign,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
 
 def get_equity():
