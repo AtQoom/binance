@@ -99,7 +99,7 @@ def place_order(side, qty, reduce_only=False):
         "reduce_only": reduce_only,
         "close": reduce_only
     })
-    timestamp = get_server_timestamp_ms()
+    timestamp = get_server_timestamp()
     headers = get_headers("POST", "/futures/usdt/orders", timestamp, body=body)
     try:
         r = requests.post(BASE_URL + "/futures/usdt/orders", headers=headers, data=body, timeout=10)
