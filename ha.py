@@ -1,6 +1,5 @@
 import requests
 import pandas as pd
-from datetime import datetime
 
 def fetch_ohlcv(symbol="SOL_USDT", interval="1m", limit=100):
     url = f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks"

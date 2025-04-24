@@ -26,7 +26,6 @@ def handle_signal(signal, strength):
     qty = max(int((equity * RISK_PCT * LEVERAGE * strength) / price), MIN_QTY)
     place_order(side, qty)
 
-    # 상태 업데이트
     state["side"] = side
     state["entry_price"] = price
     state["qty"] += qty
@@ -46,12 +45,10 @@ def check_exit_condition():
 
     ha = compute_heikin_ashi(df)
     last_6 = ha.tail(6)
-
-    # 마지막 5봉이 같은 색 + 마지막 1봉이 반대 색
-    recent_colors = last_6["HA_color"].tolist()
-    if len(recent_colors) < 6:
+    if len(last_6) < 6:
         return
 
+    recent_colors = last_6["HA_color"].tolist()
     trend_color = recent_colors[0]
     if all(c == trend_color for c in recent_colors[:5]) and recent_colors[5] != trend_color:
         price = get_market_price()
