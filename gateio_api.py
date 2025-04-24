@@ -1,11 +1,15 @@
 import os, time, json, hmac, hashlib, requests
 
+# 환경 변수에서 API 키 가져오기
 API_KEY = os.environ.get("API_KEY", "")
 API_SECRET = os.environ.get("API_SECRET", "")
 BASE_URL = "https://api.gateio.ws/api/v4"
+
+# 설정
 SYMBOL = "SOL_USDT"
 MIN_ORDER_USDT = 3
 
+# ✅ JSON 직렬화 안전 처리
 def safe_json_dumps(obj):
     try:
         return json.dumps(obj, separators=(',', ':'), allow_nan=False)
@@ -13,34 +17,35 @@ def safe_json_dumps(obj):
         print(f"[❌ JSON 직렬화 오류]: {e}")
         return ""
 
-# ✅ Gate.io 서버 시간 가져오기
+# ✅ Gate.io 서버 시간 (초 단위)
 def get_server_timestamp():
     try:
         r = requests.get("https://api.gateio.ws/api/v4/timestamp", timeout=5)
         if r.status_code == 200:
-            return str(int(r.text))  # ✅ 초 단위로 그대로!
+            return str(int(r.text))  # 초 단위
     except Exception as e:
         print(f"[ERROR] 서버 시간 조회 실패: {e}")
-    return str(int(time.time()))  # fallback: 초 단위
+    return str(int(time.time()))  # fallback
 
-# ✅ timestamp 외부에서 받아 사용
+# ✅ 인증 헤더 생성
 def get_headers(method, endpoint, timestamp, query="", body=""):
     full_path = f"/api/v4{endpoint}"
     hashed_payload = hashlib.sha512((body or "").encode('utf-8')).hexdigest()
-    sign_str = f"{method.upper()}\n{full_path}\n{query}\n{hashed_payload}\n{timestamp}"  # ✅ 여기는 그대로
+    sign_str = f"{method.upper()}\n{full_path}\n{query}\n{hashed_payload}\n{timestamp}"
     sign = hmac.new(API_SECRET.encode(), sign_str.encode(), hashlib.sha512).hexdigest()
     return {
         "KEY": API_KEY,
-        "Timestamp": timestamp,  # ✅ 초 단위로 보내기
+        "Timestamp": timestamp,
         "SIGN": sign,
         "Content-Type": "application/json",
         "Accept": "application/json"
     }
 
+# ✅ 잔고 조회
 def get_equity():
     try:
         endpoint = "/futures/usdt/accounts"
-        timestamp = get_server_timestamp_ms()
+        timestamp = get_server_timestamp()
         headers = get_headers("GET", endpoint, timestamp)
         r = requests.get(BASE_URL + endpoint, headers=headers, timeout=10)
         print("[DEBUG] 잔고 응답:", r.status_code, r.text)
@@ -50,10 +55,11 @@ def get_equity():
         print(f"[ERROR] 잔고 조회 실패: {e}")
     return 0
 
+# ✅ 현재 가격 조회
 def get_market_price():
     try:
         endpoint = "/futures/usdt/tickers"
-        timestamp = get_server_timestamp_ms()
+        timestamp = get_server_timestamp()
         headers = get_headers("GET", endpoint, timestamp)
         r = requests.get(BASE_URL + endpoint, headers=headers, timeout=10)
         if r.status_code == 200:
@@ -64,10 +70,11 @@ def get_market_price():
         print(f"[ERROR] 시세 조회 실패: {e}")
     return 0
 
+# ✅ 보유 포지션 조회
 def get_position_size():
     try:
         endpoint = "/futures/usdt/positions"
-        timestamp = get_server_timestamp_ms()
+        timestamp = get_server_timestamp()
         headers = get_headers("GET", endpoint, timestamp)
         r = requests.get(BASE_URL + endpoint, headers=headers, timeout=10)
         if r.status_code == 200:
@@ -78,6 +85,7 @@ def get_position_size():
         print(f"[ERROR] 포지션 조회 실패: {e}")
     return 0
 
+# ✅ 주문 전송
 def place_order(side, qty, reduce_only=False):
     price = get_market_price()
     if price == 0:
