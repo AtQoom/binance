@@ -27,7 +27,7 @@ def get_server_timestamp_ms():
 def get_headers(method, endpoint, timestamp, query="", body=""):
     full_path = f"/api/v4{endpoint}"
     hashed_payload = hashlib.sha512((body or "").encode('utf-8')).hexdigest()
-    sign_str = f"{method.upper()}\\n{full_path}\\n{query}\\n{hashed_payload}\\n{timestamp}"
+    sign_str = f"{method.upper()}\n{full_path}\n{query}\n{hashed_payload}\n{timestamp}"
     sign = hmac.new(API_SECRET.encode(), sign_str.encode(), hashlib.sha512).hexdigest()
     return {
         "KEY": API_KEY,
