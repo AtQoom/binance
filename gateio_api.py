@@ -1,11 +1,17 @@
 import os, time, json, hmac, hashlib, requests
 
+# ✅ 환경 변수 설정
 API_KEY = os.environ.get("API_KEY", "")
 API_SECRET = os.environ.get("API_SECRET", "")
 BASE_URL = "https://api.gateio.ws/api/v4"
+
+# ✅ 심볼 및 설정
 SYMBOL = "SOL_USDT"
 MIN_ORDER_USDT = 3
+LEVERAGE = 13
+RISK_PCT = round(0.10 / LEVERAGE, 6)  # ✅ 전체 시드의 10%만 진입
 
+# ✅ JSON 직렬화 안전 함수
 def safe_json_dumps(obj):
     try:
         return json.dumps(obj, separators=(',', ':'), allow_nan=False)
@@ -13,15 +19,17 @@ def safe_json_dumps(obj):
         print(f"[❌ JSON 직렬화 오류]: {e}")
         return ""
 
+# ✅ 서버 시간 (초 단위)
 def get_server_timestamp():
     try:
         r = requests.get("https://api.gateio.ws/api/v4/timestamp", timeout=5)
         if r.status_code == 200:
-            return str(int(r.text))  # 초 단위
+            return str(int(r.text))
     except Exception as e:
         print(f"[ERROR] 서버 시간 조회 실패: {e}")
     return str(int(time.time()))
 
+# ✅ 헤더 생성 (서명 포함)
 def get_headers(method, endpoint, timestamp, query="", body=""):
     full_path = f"/api/v4{endpoint}"
     hashed_payload = hashlib.sha512((body or "").encode('utf-8')).hexdigest()
@@ -35,6 +43,22 @@ def get_headers(method, endpoint, timestamp, query="", body=""):
         "Accept": "application/json"
     }
 
+# ✅ 레버리지 설정
+def set_leverage(leverage=LEVERAGE):
+    endpoint = f"/futures/usdt/positions/{SYMBOL}/leverage"
+    body = safe_json_dumps({
+        "leverage": leverage,
+        "cross_leverage_limit": 0  # 격리모드
+    })
+    timestamp = get_server_timestamp()
+    headers = get_headers("POST", endpoint, timestamp, body=body)
+    try:
+        r = requests.post(BASE_URL + endpoint, headers=headers, data=body, timeout=10)
+        print("[📌 레버리지 설정 응답]", r.status_code, r.text)
+    except Exception as e:
+        print("[❌ 레버리지 설정 실패]", e)
+
+# ✅ 잔고 조회
 def get_equity():
     try:
         endpoint = "/futures/usdt/accounts"
@@ -48,6 +72,7 @@ def get_equity():
         print(f"[ERROR] 잔고 조회 실패: {e}")
     return 0
 
+# ✅ 현재가 조회
 def get_market_price():
     try:
         endpoint = "/futures/usdt/tickers"
@@ -62,6 +87,7 @@ def get_market_price():
         print(f"[ERROR] 시세 조회 실패: {e}")
     return 0
 
+# ✅ 포지션 수량 조회
 def get_position_size():
     try:
         endpoint = "/futures/usdt/positions"
@@ -76,6 +102,7 @@ def get_position_size():
         print(f"[ERROR] 포지션 조회 실패: {e}")
     return 0
 
+# ✅ 주문 전송 함수
 def place_order(side, qty, reduce_only=False):
     price = get_market_price()
     if price == 0:
