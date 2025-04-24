@@ -1,6 +1,25 @@
 import os, time, json, hmac, hashlib, requests
-from config import API_KEY, API_SECRET, BASE_URL, SYMBOL, MIN_ORDER_USDT
-from utils import safe_json_dumps, get_server_timestamp
+from config import SYMBOL
+
+API_KEY = os.environ.get("API_KEY", "")
+API_SECRET = os.environ.get("API_SECRET", "")
+BASE_URL = "https://api.gateio.ws/api/v4"
+
+def safe_json_dumps(obj):
+    try:
+        return json.dumps(obj, separators=(',', ':'), allow_nan=False)
+    except Exception as e:
+        print(f"[❌ JSON 직렬화 오류]: {e}")
+        return ""
+
+def get_server_timestamp():
+    try:
+        r = requests.get("https://api.gateio.ws/api/v4/timestamp", timeout=5)
+        if r.status_code == 200:
+            return str(int(r.text))
+    except Exception as e:
+        print(f"[ERROR] 서버 시간 조회 실패: {e}")
+    return str(int(time.time()))
 
 def get_headers(method, endpoint, timestamp, query="", body=""):
     full_path = f"/api/v4{endpoint}"
@@ -56,6 +75,7 @@ def get_position_size():
     return 0
 
 def place_order(side, qty, reduce_only=False):
+    from config import MIN_ORDER_USDT
     price = get_market_price()
     if price == 0:
         return False
