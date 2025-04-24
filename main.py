@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 import threading
 import time
-from strategy import handle_signal, check_exit_condition
+from strategy import handle_signal, strategy_loop
 from state import init_state
 
 app = Flask(__name__)
@@ -20,11 +20,6 @@ def webhook():
         print(f"[ERROR] 웹훅 처리 실패: {e}")
         return jsonify({"error": "internal error"}), 500
 
-def exit_condition_loop():
-    while True:
-        check_exit_condition()
-        time.sleep(60)
-
 if __name__ == "__main__":
-    threading.Thread(target=exit_condition_loop, daemon=True).start()
+    threading.Thread(target=strategy_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=8080)

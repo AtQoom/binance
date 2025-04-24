@@ -1,7 +1,7 @@
 from gateio_api import place_order, get_equity, get_market_price, get_position_size
 from state import load_state, save_state
 from ha import fetch_ohlcv, compute_heikin_ashi
-import math
+import time
 
 LEVERAGE = 6
 RISK_PCT = 0.16
@@ -34,33 +34,56 @@ def handle_signal(signal, strength):
 
     return {"status": "주문 전송", "side": side, "qty": qty}
 
-def check_exit_condition():
+def strategy_loop():
+    while True:
+        try:
+            check_exit_conditions()
+        except Exception as e:
+            print(f"[ERROR] 전략 루프 실패: {e}")
+        time.sleep(60)
+
+def check_exit_conditions():
     state = load_state()
     if state["side"] is None or state["qty"] <= 0:
         return
 
     df = fetch_ohlcv()
-    if df.empty:
+    if df.empty or len(df) < 20:
         return
 
     ha = compute_heikin_ashi(df)
-    last_6 = ha.tail(6)
-    if len(last_6) < 6:
+    recent = ha.tail(10)
+    colors = recent["HA_color"].tolist()
+
+    current_price = get_market_price()
+    entry_price = state["entry_price"]
+    side = state["side"]
+
+    def half_exit():
+        place_order("sell" if side == "buy" else "buy", 0, reduce_only=True)
+        state["qty"] = get_position_size()
+        state["partial_exit_count"] += 1
+        save_state(state)
+
+    # 조건 2: 5봉 같은색 + 반대봉 + 수익 중
+    if all(colors[-6:-1]) == colors[-6] and colors[-1] != colors[-6]:
+        if side == "buy" and current_price > entry_price:
+            print("[🔁 조건2] 롱 절반 익절")
+            half_exit()
+        elif side == "sell" and current_price < entry_price:
+            print("[🔁 조건2] 숏 절반 익절")
+            half_exit()
         return
 
-    recent_colors = last_6["HA_color"].tolist()
-    trend_color = recent_colors[0]
-    if all(c == trend_color for c in recent_colors[:5]) and recent_colors[5] != trend_color:
-        price = get_market_price()
-        if state["side"] == "buy" and price > state["entry_price"]:
-            print("[🎯 익절 조건 충족] 롱 포지션 절반 익절")
-            place_order("sell", 0, reduce_only=True)
-            state["qty"] = get_position_size()
-            state["partial_exit_count"] += 1
-            save_state(state)
-        elif state["side"] == "sell" and price < state["entry_price"]:
-            print("[🎯 익절 조건 충족] 숏 포지션 절반 익절")
-            place_order("buy", 0, reduce_only=True)
-            state["qty"] = get_position_size()
-            state["partial_exit_count"] += 1
-            save_state(state)
+    # 조건 3: 4봉 → 반대 1봉 → 3봉 같은색 → 반대 1봉
+    trend = colors[-9:]
+    if (trend[0] == trend[1] == trend[2] == trend[3] and
+        trend[4] != trend[3] and
+        trend[5] == trend[6] == trend[7] and
+        trend[8] != trend[7]):
+        if side == "buy" and current_price > entry_price:
+            print("[🔁 조건3] 롱 절반 익절")
+            half_exit()
+        elif side == "sell" and current_price < entry_price:
+            print("[🔁 조건3] 숏 절반 익절")
+            half_exit()
