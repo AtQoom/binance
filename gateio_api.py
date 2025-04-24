@@ -1,35 +1,7 @@
 import os, time, json, hmac, hashlib, requests
+from config import API_KEY, API_SECRET, BASE_URL, SYMBOL, MIN_ORDER_USDT
+from utils import safe_json_dumps, get_server_timestamp
 
-# ✅ 환경변수 및 기본 설정
-API_KEY = os.environ.get("API_KEY", "")
-API_SECRET = os.environ.get("API_SECRET", "")
-BASE_URL = "https://api.gateio.ws/api/v4"
-SYMBOL = "SOL_USDT"
-MIN_ORDER_USDT = 3
-
-# ✅ 전략 관련 상수
-RISK_PCT = 0.10
-LEVERAGE = 13
-MIN_QTY = 1
-
-def safe_json_dumps(obj):
-    try:
-        return json.dumps(obj, separators=(',', ':'), allow_nan=False)
-    except Exception as e:
-        print(f"[❌ JSON 직렬화 오류]: {e}")
-        return ""
-
-# ✅ 서버 시간 가져오기 (초 단위)
-def get_server_timestamp():
-    try:
-        r = requests.get("https://api.gateio.ws/api/v4/timestamp", timeout=5)
-        if r.status_code == 200:
-            return str(int(r.text))
-    except Exception as e:
-        print(f"[ERROR] 서버 시간 조회 실패: {e}")
-    return str(int(time.time()))
-
-# ✅ API 요청 헤더 생성
 def get_headers(method, endpoint, timestamp, query="", body=""):
     full_path = f"/api/v4{endpoint}"
     hashed_payload = hashlib.sha512((body or "").encode('utf-8')).hexdigest()
@@ -43,7 +15,6 @@ def get_headers(method, endpoint, timestamp, query="", body=""):
         "Accept": "application/json"
     }
 
-# ✅ 가용 잔고 조회
 def get_equity():
     try:
         endpoint = "/futures/usdt/accounts"
@@ -52,12 +23,10 @@ def get_equity():
         r = requests.get(BASE_URL + endpoint, headers=headers, timeout=10)
         if r.status_code == 200:
             return float(r.json()["available"])
-        print(f"[❌ 잔고 응답 오류] {r.status_code} - {r.text}")
     except Exception as e:
         print(f"[ERROR] 잔고 조회 실패: {e}")
     return 0
 
-# ✅ 현재 시장 가격 조회
 def get_market_price():
     try:
         endpoint = "/futures/usdt/tickers"
@@ -72,7 +41,6 @@ def get_market_price():
         print(f"[ERROR] 시세 조회 실패: {e}")
     return 0
 
-# ✅ 현재 포지션 수량 조회
 def get_position_size():
     try:
         endpoint = "/futures/usdt/positions"
@@ -87,21 +55,18 @@ def get_position_size():
         print(f"[ERROR] 포지션 조회 실패: {e}")
     return 0
 
-# ✅ 주문 실행 함수
 def place_order(side, qty, reduce_only=False):
     price = get_market_price()
     if price == 0:
-        print("[❌ 시세 없음]")
-        return
+        return False
     if reduce_only:
         qty = get_position_size()
         if qty <= 0:
-            print("[⛔ 청산할 포지션 없음]")
-            return
+            return False
     notional = qty * price
     if notional < MIN_ORDER_USDT and not reduce_only:
         print(f"[❌ 주문 금액 {notional:.2f} < 최소 {MIN_ORDER_USDT}]")
-        return
+        return False
     body = safe_json_dumps({
         "contract": SYMBOL,
         "size": qty,
@@ -116,8 +81,10 @@ def place_order(side, qty, reduce_only=False):
     try:
         r = requests.post(BASE_URL + "/futures/usdt/orders", headers=headers, data=body, timeout=10)
         if r.status_code == 200:
-            print(f"[🚀 주문 완료] {side.upper()} {qty}개")
+            print(f"[🚀 주문] {side.upper()} {qty}개")
+            return True
         else:
             print(f"[❌ 주문 실패] {r.status_code} - {r.text}")
     except Exception as e:
-        print(f"[ERROR] 주문 요청 실패: {e}")
+        print(f"[ERROR] 주문 실패: {e}")
+    return False

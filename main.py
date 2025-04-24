@@ -1,10 +1,8 @@
 from flask import Flask, request, jsonify
-from strategy import handle_signal, strategy_loop
-from state import init_state
 import threading
+from strategy import handle_signal, strategy_loop
 
 app = Flask(__name__)
-init_state()
 
 @app.route("/", methods=["POST"])
 def webhook():
