@@ -9,30 +9,44 @@ MIN_QTY = 1
 
 def handle_signal(signal, strength):
     state = load_state()
+    incoming_side = None
+
     if signal == "ENTRY LONG":
-        place_order("sell", 0, reduce_only=True)
-        side = "buy"
+        incoming_side = "buy"
     elif signal == "ENTRY SHORT":
-        place_order("buy", 0, reduce_only=True)
-        side = "sell"
+        incoming_side = "sell"
     else:
         return {"error": "Invalid signal"}
 
+    # 반대 방향이면 전량 청산 후 리셋
+    if state["side"] and state["side"] != incoming_side:
+        print("[🔁 반대방향 신호] 기존 포지션 청산 후 전략 리셋")
+        place_order("sell" if state["side"] == "buy" else "buy", 0, reduce_only=True)
+        state = {
+            "side": None,
+            "entry_price": 0,
+            "entry_time": None,
+            "qty": 0,
+            "partial_exit_count": 0,
+            "entry_round": 0
+        }
+
+    # 신규 진입
     equity = get_equity()
     price = get_market_price()
     if equity == 0 or price == 0:
         return {"error": "잔고 또는 시세 오류"}
 
     qty = max(int((equity * RISK_PCT * LEVERAGE * strength) / price), MIN_QTY)
-    place_order(side, qty)
+    place_order(incoming_side, qty)
 
-    state["side"] = side
+    state["side"] = incoming_side
     state["entry_price"] = price
     state["qty"] += qty
     state["entry_round"] += 1
     save_state(state)
 
-    return {"status": "주문 전송", "side": side, "qty": qty}
+    return {"status": "주문 전송", "side": incoming_side, "qty": qty}
 
 def strategy_loop():
     while True:
