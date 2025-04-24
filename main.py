@@ -21,5 +21,6 @@ def webhook():
         return jsonify({"error": "internal error"}), 500
 
 if __name__ == "__main__":
-    threading.Thread(target=strategy_loop, daemon=True).start()
+    set_leverage(leverage=13)  # ✅ 여기 추가!
+    threading.Thread(target=check_tp_sl_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=8080)
