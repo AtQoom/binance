@@ -20,12 +20,13 @@ def set_leverage(leverage=13):
         "leverage": leverage,
         "cross_leverage_limit": 0  # 0이면 격리모드
     }
-    body = json.dumps(payload)
+
     timestamp = get_server_timestamp()
-    headers = get_headers("POST", endpoint, timestamp, body=body)
+    headers = get_headers("POST", endpoint, timestamp, body=json.dumps(payload))
 
     try:
-        r = requests.post(BASE_URL + endpoint, headers=headers, data=body, timeout=10)
+        # ✅ 여기! json=payload 로 바꿔야 함
+        r = requests.post(BASE_URL + endpoint, headers=headers, json=payload, timeout=10)
         print("[📌 레버리지 설정 응답]", r.status_code, r.text)
     except Exception as e:
         print("[❌ 레버리지 설정 실패]", e)
