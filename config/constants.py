@@ -1,21 +1,14 @@
-# config/constants.py
+# Constants
 
-# 기본 거래 설정
-SYMBOL = "BTC_USDT"         # 비트코인 선물
-LEVERAGE = 20               # 레버리지 20배
+# 청산 조건
+TAKE_PROFIT_PERCENT = 0.003  # 0.3% 수익
+PARTIAL_CLOSE_1 = 0.4        # 40% 청산
+PARTIAL_CLOSE_2 = 0.3        # 30% 청산
 
-# 기본 진입 수량 (시드 대비 퍼센트)
-ENTRY_PERCENT = 10
-HEAVY_ENTRY_PERCENT = 20
+# 레버리지 및 거래 심볼
+SYMBOL = "BTC_USDT"
+LEVERAGE = 20
 
-# 청산 관련 설정
-FIRST_TAKE_PROFIT = 0.003    # 0.3% 수익 청산
-SECOND_TAKE_PROFIT_RSI_LONG = 70  # 롱포지션 RSI 청산 기준
-SECOND_TAKE_PROFIT_RSI_SHORT = 30 # 숏포지션 RSI 청산 기준
-
-# RSI 기준
-RSI_PERIOD = 14
-RSI_LONG_ENTRY = 24
-RSI_SHORT_ENTRY = 76
-RSI_HEAVY_LONG = 17
-RSI_HEAVY_SHORT = 83
+# 진입 퍼센트
+ENTRY_PERCENT_NORMAL = 0.10
+ENTRY_PERCENT_STRONG = 0.20
