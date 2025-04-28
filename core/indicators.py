@@ -1,1 +1,1 @@
-# Indicators (RSI Calculation)
+# Indicators like RSI calculation

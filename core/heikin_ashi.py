@@ -1,1 +1,1 @@
-# Heikin Ashi Candle Calculation
+# Heikin Ashi candles calculator

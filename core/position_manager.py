@@ -1,1 +1,1 @@
-# Position Manager (Entry/Exit Tracking)
+# Manage position states and average price updates

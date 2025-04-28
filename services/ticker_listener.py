@@ -1,1 +1,1 @@
-# Listen to real-time ticker data
+# Real-time ticker listener

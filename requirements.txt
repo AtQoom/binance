@@ -1,4 +1,1 @@
-websockets
-requests
-python-dotenv
-ccxt
+# Required Python packages for project

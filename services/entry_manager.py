@@ -1,1 +1,1 @@
-# Entry Manager based on strategy signals
+# Entry management services

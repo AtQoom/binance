@@ -1,1 +1,1 @@
-# Exit Manager based on profit/risk
+# Exit management services

@@ -1,1 +1,1 @@
-# Trading strategy implementation
+# Strategy logic combining entry and exit
