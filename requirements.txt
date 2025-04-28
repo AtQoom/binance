@@ -1,1 +1,5 @@
-# Required Python packages for project
+fastapi
+uvicorn
+requests
+pandas
+numpy
