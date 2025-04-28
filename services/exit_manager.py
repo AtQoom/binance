@@ -1,10 +1,10 @@
-# services/exit_manager.py
+from config.constants import *
+from core.position_manager import set_position
 
-from core.trader import place_order
-from config.constants import LEVERAGE
+def exit_partial(current_qty, partial_ratio):
+    qty_to_exit = current_qty * partial_ratio
+    return qty_to_exit
 
-def exit_long(quantity):
-    place_order("sell", quantity, LEVERAGE)
-
-def exit_short(quantity):
-    place_order("buy", quantity, LEVERAGE)
+def exit_all():
+    set_position(None)
+    return "close_all"
