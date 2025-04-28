@@ -18,6 +18,9 @@ async def listen_ticker():
             current_price = await strategy.get_current_price()
             current_rsi = await strategy.get_current_rsi()
 
+# ✅ 테스트용 RSI 덮어쓰기
+current_rsi = 20  # 예: RSI 20으로 테스트
+
             if not position_manager.is_in_position():
                 await entry_manager.check_entry(current_price, current_rsi)
             else:
