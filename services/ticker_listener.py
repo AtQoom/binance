@@ -1,31 +1,40 @@
-from services.entry_manager import EntryManager
-from services.exit_manager import ExitManager
+# services/ticker_listener.py
+
+from services.entry_manager import enter_long, enter_short
+from services.exit_manager import exit_long, exit_short
 from core.position_manager import PositionManager
-from core.strategy import Strategy
+from core.strategy import *
 from config.settings import API_KEY, API_SECRET
 import asyncio
 
-# 간단한 구조
 async def listen_ticker():
-    # 기본 객체 생성
     position_manager = PositionManager()
-    strategy = Strategy()
-    entry_manager = EntryManager(position_manager, strategy)
-    exit_manager = ExitManager(position_manager, strategy)
 
     while True:
         try:
-            # 가격, rsi 등 가져오기
-            price = await strategy.get_current_price()
-            rsi = await strategy.get_current_rsi()
+            # 가격과 RSI 데이터 받아오기 (Gate.io API 연결 예정)
+            price = 50000  # 임시
+            rsi = 40       # 임시
 
-            # 포지션 유무에 따라 진입 / 청산
+            # 진입/청산 체크
             if not position_manager.is_in_position():
-                await entry_manager.check_entry(price, rsi)
+                if should_enter_long(rsi):
+                    enter_long(0.01)  # 수량은 예시
+                    position_manager.update_position(price, 0.01)
+                elif should_enter_short(rsi):
+                    enter_short(0.01)
+                    position_manager.update_position(price, 0.01)
             else:
-                await exit_manager.check_exit(price, rsi)
+                # 포지션 있을 때 청산 체크
+                is_long = True  # 예시
+                if should_take_first_profit(price, position_manager.avg_entry_price, is_long):
+                    exit_long(position_manager.position_size * 0.4)
 
-            await asyncio.sleep(1)  # 1초마다 체크
+                if should_take_second_profit(rsi, is_long):
+                    exit_long(position_manager.position_size * 0.3)
+
+            await asyncio.sleep(1)
+
         except Exception as e:
-            print(f"Error in listen_ticker: {e}")
+            print(f"Error in ticker_listener: {e}")
             await asyncio.sleep(5)
