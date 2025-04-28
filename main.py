@@ -12,4 +12,4 @@ def read_root():
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(listen_ticker())
+    asyncio.create_task(listen_ticker())  # ✨ listen_ticker를 비동기 태스크로 실행
