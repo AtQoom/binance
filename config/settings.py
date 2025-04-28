@@ -1,4 +1,7 @@
-# GateIO API 설정
+# config/settings.py
 
-API_KEY = "YOUR_GATEIO_API_KEY"
-API_SECRET = "YOUR_GATEIO_API_SECRET"
+import os
+
+API_KEY = os.getenv("API_KEY")
+API_SECRET = os.getenv("API_SECRET")
+BASE_URL = "https://api.gateio.ws/api/v4"
