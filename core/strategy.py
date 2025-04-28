@@ -1,22 +1,27 @@
-from core.indicators import calculate_rsi
+# core/strategy.py
+
 from config.constants import *
 
-def check_entry_signal(price_list, rsi_threshold_long=24, rsi_threshold_short=76):
-    rsi = calculate_rsi(price_list)
+def should_enter_long(rsi):
+    return rsi < RSI_LONG_ENTRY
 
-    if rsi < rsi_threshold_long:
-        return "long"
-    elif rsi > rsi_threshold_short:
-        return "short"
+def should_enter_short(rsi):
+    return rsi > RSI_SHORT_ENTRY
+
+def is_heavy_entry_long(rsi):
+    return rsi < RSI_HEAVY_LONG
+
+def is_heavy_entry_short(rsi):
+    return rsi > RSI_HEAVY_SHORT
+
+def should_take_first_profit(current_price, avg_price, is_long):
+    if is_long:
+        return (current_price - avg_price) / avg_price >= FIRST_TAKE_PROFIT
     else:
-        return None
+        return (avg_price - current_price) / avg_price >= FIRST_TAKE_PROFIT
 
-def check_exit_signal(price_list, long_position):
-    rsi = calculate_rsi(price_list)
-
-    if long_position and rsi >= 70:
-        return "partial_exit"
-    elif not long_position and rsi <= 30:
-        return "partial_exit"
+def should_take_second_profit(rsi, is_long):
+    if is_long:
+        return rsi >= SECOND_TAKE_PROFIT_RSI_LONG
     else:
-        return None
+        return rsi <= SECOND_TAKE_PROFIT_RSI_SHORT
