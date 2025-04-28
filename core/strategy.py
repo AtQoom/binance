@@ -25,3 +25,10 @@ def should_take_second_profit(rsi, is_long):
         return rsi >= SECOND_TAKE_PROFIT_RSI_LONG
     else:
         return rsi <= SECOND_TAKE_PROFIT_RSI_SHORT
+
+def is_opposite_signal(self, rsi, is_long):
+    if is_long:
+        return rsi < RSI_LONG_ENTRY
+    else:
+        return rsi > RSI_SHORT_ENTRY
+
