@@ -1,15 +1,15 @@
 # main.py
 
 from fastapi import FastAPI
-from services.entry_manager import enter_position
-from services.exit_manager import exit_partial, exit_all
-from core.position_manager import get_position
-from core.strategy import check_entry_signal, check_exit_signal
+from services.ticker_listener import listen_ticker
+import asyncio
 
 app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "GateIO Final Server Ready!"}
+    return {"message": "GateIO Trading Server Running!"}
 
-# 이후에 Webhook용 POST 엔드포인트 추가 예정
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(listen_ticker())
