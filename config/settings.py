@@ -1,1 +1,4 @@
-# settings for API keys
+# GateIO API 설정
+
+API_KEY = "YOUR_GATEIO_API_KEY"
+API_SECRET = "YOUR_GATEIO_API_SECRET"
