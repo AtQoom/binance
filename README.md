@@ -8,10 +8,12 @@
 - Railway에 쉽게 배포 가능
 
 ## 사용 방법
-
 1. 필요한 라이브러리 설치
-   pip install -r requirements.txt
+```bash
+pip install -r requirements.txt
 2. 서버 실행
+uvicorn main:app --reload
 3. 환경변수(API Key 등)는 `config/settings.py` 수정
+
 
 ---
