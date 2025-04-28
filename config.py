@@ -1,6 +1,0 @@
-# config.py
-SYMBOL = "SOL_USDT"
-LEVERAGE = 13
-RISK_PCT = 0.16
-MIN_QTY = 1
-MIN_ORDER_USDT = 3
