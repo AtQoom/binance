@@ -1,5 +1,4 @@
 # utils/utils.py
 
-def calculate_profit(entry_price, current_price, leverage):
-    profit = (current_price - entry_price) / entry_price * leverage
-    return profit
+def calculate_percentage_change(current_price, entry_price):
+    return (current_price - entry_price) / entry_price
