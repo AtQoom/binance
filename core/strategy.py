@@ -1,13 +1,20 @@
 # core/strategy.py
 
-import random
-import asyncio
-
 class Strategy:
+    def __init__(self):
+        pass
+
     async def get_current_price(self):
-        await asyncio.sleep(0.1)  # 살짝 딜레이 (리얼틱처럼 보이게)
-        return random.uniform(60000, 62000)  # BTC USDT 예시 가격 범위
+        # 실제 API 연결 전 임시 가격
+        return 30000  # 예: 비트코인 가격 30000 달러로 고정
 
     async def get_current_rsi(self):
-        await asyncio.sleep(0.1)
-        return random.uniform(10, 90)  # RSI 10~90 사이 랜덤 값
+        # 실제 API 연결 전 임시 RSI
+        return 50  # 예: RSI 50으로 고정
+
+    async def is_reverse_signal(self, rsi, is_long):
+        # 간단히 반대 신호 감지 로직 (예시)
+        if is_long:
+            return rsi < 50
+        else:
+            return rsi > 50
