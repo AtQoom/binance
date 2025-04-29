@@ -1,8 +1,7 @@
 # main.py
-
 from fastapi import FastAPI
-from services.ticker_listener import listen_ticker
 import asyncio
+from services.ticker_listener import listen_ticker
 
 app = FastAPI()
 
@@ -12,4 +11,5 @@ def read_root():
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(listen_ticker())  # ✅ 이렇게 해야 백그라운드에서 돌면서 서버 유지
+    loop = asyncio.get_event_loop()
+    loop.create_task(listen_ticker())  # 명시적으로 비동기 루프에 task 등록
