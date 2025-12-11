@@ -405,7 +405,7 @@ class BinanceSniperBot:
                         f"포지션:{current_pos_count} | "
                         f"1배:{exposure_pct:.1f}% | "
                         f"🔥후보: {cand_info}"
-                        
+                    )    
                     last_heartbeat_time = current_time
                 
                 # ========================================
