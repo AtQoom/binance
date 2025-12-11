@@ -440,9 +440,24 @@ class BinanceSniperBot:
         HEARTBEAT_INTERVAL = 300  # 300초 = 5분
         
         while True:
+            # [필수 수정] 루프 시작 시 변수 초기화 (에러 방지)
+            total_bal = 0.0
+            avail_bal = 0.0
+            exposure_pct = 0.0
+            
             try:
                 # 1. 계좌 및 포지션 업데이트
-                total_bal, avail_bal, exposure_pct = await self.update_account_data()
+                # 만약 여기서 에러나면 except로 빠지지만, 혹시 모를 상황 대비
+                res = await self.update_account_data()
+                if res:
+                    total_bal, avail_bal, exposure_pct = res
+                    
+                # 만약 계좌 조회가 실패해서 잔고가 0이면, 이번 루프는 스킵해야 안전함
+                if total_bal <= 0:
+                    print("⚠️ 계좌 잔고 조회 실패 또는 잔고 부족. 잠시 대기...")
+                    await asyncio.sleep(5)
+                    continue
+
                 current_pos_count = len(self.positions)
                 
                 # ========================================
@@ -450,25 +465,17 @@ class BinanceSniperBot:
                 # ========================================
                 current_time = time.time()
                 if current_time - last_heartbeat_time > HEARTBEAT_INTERVAL:
-
-                    # 후보 정보 포맷팅 (상세 버전)
+                    # ... (생략: 기존 코드와 동일)
                     cand_info = "대기중..."
                     if self.best_candidate['symbol']:
                         c = self.best_candidate
-                        
-                        # BB 조건 표시 (O:만족 / X:미달)
                         bb_mark = "O" if c['bb_break'] else "X"
-                        
-                        # 로그 예: "BTC(L) R1:28.5 R3:35.0 BB:X"
-                        # 해석: BTC 롱 관점 / 1분RSI 28.5 / 3분RSI 35.0 / 볼밴돌파 실패
                         cand_info = (
-                            f"{c['symbol']}({c['type'][0]}) "  # L 또는 S로 줄임
+                            f"{c['symbol']}({c['type'][0]}) "
                             f"R1:{c['rsi_1m']:.1f} "
                             f"R3:{c['rsi_3m']:.1f} "
                             f"BB:{bb_mark}"
                         )
-                        
-                        # 초기화
                         self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
 
                     print(
@@ -487,22 +494,16 @@ class BinanceSniperBot:
                     metrics = await self.get_market_metrics(sym)
                     if not metrics: continue
                     
-                    # 1. TP 갱신 (15분 주기)
+                    # 1. TP 갱신
                     await self.update_tp_order(sym, pos, metrics['atr'])
                     
                     # 2. 물타기(DCA) 체크
                     dca_count = pos['dca_count']
-                    
-                    # 최대 차수 도달 시 스킵
-                    if dca_count >= MAX_DCA_COUNT:
-                        continue
+                    if dca_count >= MAX_DCA_COUNT: continue
                         
-                    # 이번 차수의 ATR 간격 가져오기 (0번 인덱스가 2차 진입용)
-                    # dca_count가 0이면(1차진입상태) -> GAPS[0] 사용
-                    # dca_count가 1이면(2차진입상태) -> GAPS[1] 사용
                     required_gap = DCA_ATR_GAPS[dca_count] * metrics['atr']
                     
-                    # 조건 1: 가격 도달 (ATR 간격)
+                    # 조건 1: 가격 도달
                     price_condition = False
                     if pos['side'] == 'LONG':
                         dist = pos['entry_price'] - metrics['price']
@@ -511,8 +512,7 @@ class BinanceSniperBot:
                         dist = metrics['price'] - pos['entry_price']
                         if dist >= required_gap: price_condition = True
                         
-                    # 조건 2: 신호 재발생 (불리한 가격 + 프리미엄 신호)
-                    # 가격이 평단보다 불리해야 함
+                    # 조건 2: 신호 재발생
                     signal_condition = False
                     is_bad_price = (metrics['price'] < pos['entry_price']) if pos['side'] == 'LONG' else (metrics['price'] > pos['entry_price'])
                     
@@ -528,63 +528,50 @@ class BinanceSniperBot:
                                 metrics['price'] > metrics['bb_high']):
                                 signal_condition = True
                     
-                    # 실행 조건 충족? (OR 조건)
                     if price_condition or signal_condition:
-                        # 물타기 수량 = 현재 보유 수량 * 2.0
                         dca_qty = pos['amount'] * DCA_MULTIPLIER
-                        
-                        # 주문 실행
                         order_side = 'BUY' if pos['side'] == 'LONG' else 'SELL'
                         print(f"🌊 [DCA TRIGGER] {sym} #{dca_count+1} (Price: {price_condition}, Signal: {signal_condition})")
                         
                         success = await self.execute_order(sym, order_side, dca_qty)
                         if success:
-                            # 상태 업데이트 (차수 증가)
                             self.state.update_position(sym, pos['side'], dca_count + 1)
-                            await asyncio.sleep(1.0) # 안전 대기
+                            await asyncio.sleep(1.0)
 
                 # ========================================
                 # B. 신규 진입 스캔 (포지션 여유 있을 때만)
                 # ========================================
                 if current_pos_count < SYMBOL_LIMIT:
-                    # 너무 많은 요청 방지를 위해 랜덤 20개 or 거래량 상위 스캔 권장
-                    # 여기서는 전체 심볼 중 앞쪽 30개만 샘플링 (실전에서는 로직 개선 필요)
-                    # 간단한 로테이션 스캔 방식 적용 가능
-                    
-                    # 스캔 대상: 보유하지 않은 심볼 중 20개씩 순환
                     import random
                     scan_candidates = [s for s in self.symbols if s not in self.positions]
-                    scan_batch = random.sample(scan_candidates, min(len(scan_candidates), 20))
+                    # [안전 설정] 한 번에 10개만 스캔
+                    scan_batch = random.sample(scan_candidates, min(len(scan_candidates), 10))
                     
                     for sym in scan_batch:
-                        # 이미 3개 찼으면 중단
                         if len(self.positions) >= SYMBOL_LIMIT: break
                         
                         metrics = await self.get_market_metrics(sym)
+                        # [안전 설정] API 과부하 방지 딜레이
+                        await asyncio.sleep(0.2)
+                        
                         if not metrics: continue
                         
-                        # 롱 진입 체크
-                        # 현재가가 BB 하단 아래 + RSI 조건
+                        # 롱/숏 진입 체크
                         entry_signal = None
-                        
                         if (metrics['rsi_3m'] < RSI_3M_LONG_TH and 
                             metrics['rsi_1m'] < RSI_1M_LONG_TH and 
                             metrics['price'] < metrics['bb_low']):
                             entry_signal = 'LONG'
-                            
-                        # 숏 진입 체크
                         elif (metrics['rsi_3m'] > RSI_3M_SHORT_TH and 
                               metrics['rsi_1m'] > RSI_1M_SHORT_TH and 
                               metrics['price'] > metrics['bb_high']):
                             entry_signal = 'SHORT'
                             
                         if entry_signal:
-                            # 진입 수량 계산 (총 자산의 5%)
-                            entry_val = total_wallet_balance * INITIAL_ENTRY_PCT
-                            
-                            # 가용 잔고 체크 (최소한의 안전장치)
-                            # 증거금(10배) 필요액 = entry_val / 10
+                            # 여기서 total_bal 사용 (이제 안전함)
+                            entry_val = total_bal * INITIAL_ENTRY_PCT
                             required_margin = entry_val / LEVERAGE
+                            
                             if avail_bal < required_margin:
                                 print(f"⚠️ [SKIP] {sym} 증거금 부족 (Need: {required_margin:.2f})")
                                 continue
@@ -597,14 +584,11 @@ class BinanceSniperBot:
                                 
                                 success = await self.execute_order(sym, side, qty)
                                 if success:
-                                    # 상태 저장 (0차 진입)
                                     self.state.update_position(sym, entry_signal, 0)
                                     await asyncio.sleep(1.0)
-                                    # 포지션 딕셔너리에 즉시 반영 (중복 진입 방지)
                                     self.positions[sym] = {'dummy': True} 
-                        # [업그레이드] 모니터링: 상세 조건 기록
-                        # 롱/숏 중 어느 쪽에 더 가까운지 판단
-                        # (단순 거리 계산: RSI 1m 기준)
+
+                        # 후보 모니터링 로직
                         dist_long = metrics['rsi_1m'] - RSI_1M_LONG_TH
                         dist_short = RSI_1M_SHORT_TH - metrics['rsi_1m']
                         
@@ -612,10 +596,7 @@ class BinanceSniperBot:
                         target_type = "LONG" if is_long_closer else "SHORT"
                         current_gap = dist_long if is_long_closer else dist_short
 
-                        # 더 강력한(조건에 가까운) 후보 발견 시 갱신
                         if current_gap < self.best_candidate['gap']:
-                            # BB 돌파 여부 체크 (O/X)
-                            # 롱이면 가격 < 하단, 숏이면 가격 > 상단이어야 함
                             bb_cond = False
                             if target_type == "LONG":
                                 bb_cond = metrics['price'] < metrics['bb_low']
@@ -628,7 +609,7 @@ class BinanceSniperBot:
                                 'type': target_type,
                                 'rsi_1m': metrics['rsi_1m'],
                                 'rsi_3m': metrics['rsi_3m'],
-                                'bb_break': bb_cond,  # True면 BB 조건 만족
+                                'bb_break': bb_cond,
                                 'price': metrics['price']
                             }
                             
