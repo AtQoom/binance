@@ -348,11 +348,31 @@ class BinanceSniperBot:
         await self.initialize()
         print(f"🚀 ATR Sniper Bot 가동 시작! (Target: {INITIAL_ENTRY_PCT*100}% Entry / Max {SYMBOL_LIMIT} Symbols)")
         
+        # [추가] 생존 신고 타이머 초기화 (루프 밖)
+        last_heartbeat_time = time.time()
+        HEARTBEAT_INTERVAL = 300  # 300초 = 5분
+        
         while True:
             try:
                 # 1. 계좌 및 포지션 업데이트
                 total_bal, avail_bal = await self.update_account_data()
                 current_pos_count = len(self.positions)
+                
+                # ========================================
+                # [추가] 생존 신고 (Heartbeat) 로직
+                # (계좌 업데이트 직후에 배치)
+                # ========================================
+                current_time = time.time()
+                if current_time - last_heartbeat_time > HEARTBEAT_INTERVAL:
+                    try:
+                        # BTC 가격 조회 (정보용)
+                        ticker = await self.client.futures_symbol_ticker(symbol="BTCUSDT")
+                        btc_price = float(ticker['price'])
+                    except:
+                        btc_price = 0.0
+
+                    print(f"💓 [생존신고] 자산: ${total_bal:.2f} | 포지션: {current_pos_count}개 | BTC: ${btc_price:,.0f}")
+                    last_heartbeat_time = current_time
                 
                 # ========================================
                 # A. 보유 포지션 관리 (물타기 & TP)
