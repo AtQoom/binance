@@ -258,13 +258,11 @@ class BinanceSniperBot:
             print(f"❌ 계좌 업데이트 오류: {e}")
             return 0, 0, 0.0
 
-    # (주의) 앞에 공백 4칸이 반드시 있어야 합니다.
     async def get_market_metrics(self, symbol):
         """
-        [최적화됨] 하이브리드 캐싱 전략 적용
-        - ATR(15m), RSI(3m): 변동이 적으므로 60초간 캐시(Cache) 사용
-        - RSI(1m), Price, BB: 실시간성이 중요하므로 매번 API 호출
-        => API 요청량 대폭 감소 (IP Ban 방지) + 반응 속도 유지
+        [최적화됨] 하이브리드 캐싱 + ATR 기반 변동성 계산
+        - ATR(15m), RSI(3m): 60초 캐싱
+        - RSI(1m), ATR(1m), Price: 실시간 계산
         """
         try:
             now = time.time()
@@ -274,95 +272,93 @@ class BinanceSniperBot:
             is_cache_valid = False
             
             if cached_data:
-                # 60초 이내에 갱신된 데이터라면 유효함
                 if now - cached_data['updated_at'] < 60:
                     is_cache_valid = True
             
-            # ====================================================
-            # CASE A: 캐시가 유효함 (가벼운 1m 캔들만 호출 -> API 1회)
-            # ====================================================
+            # ---------------------------------------------------
+            # 공통: 실시간 데이터 (1m) 계산
+            # ---------------------------------------------------
+            # 캐시가 있든 없든 1m 데이터는 항상 새로 가져와야 함 (스나이핑 핵심)
+            # 단, 캐시가 없을 때는 15m, 3m도 같이 가져와야 하므로 분기 처리
+            
+            task_1m = self.client.futures_klines(symbol=symbol, interval='1m', limit=30)
+            
             if is_cache_valid:
-                # 1m 캔들만 실시간 조회
-                k_1m = await self.client.futures_klines(symbol=symbol, interval='1m', limit=30)
-                if not k_1m: return None
-                
-                # 데이터프레임 변환
-                df_1m = pd.DataFrame(k_1m).iloc[:, :6]
-                df_1m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
-                df_1m['close'] = df_1m['close'].astype(float)
-                
-                # 1m 지표 계산 (실시간)
-                rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
-                bb = df_1m.ta.bbands(length=20, std=2.0)
-                bb_cols = bb.columns.tolist()
-                
-                # 결과 조합 (캐시된 값 + 실시간 값)
-                return {
-                    'atr': cached_data['atr'],      # 캐시 사용
-                    'rsi_3m': cached_data['rsi_3m'], # 캐시 사용
-                    'rsi_1m': rsi_1m,               # 실시간
-                    'bb_low': bb[bb_cols[0]].iloc[-1], # 실시간
-                    'bb_high': bb[bb_cols[2]].iloc[-1],# 실시간
-                    'price': float(df_1m['close'].iloc[-1]) # 실시간
-                }
-
-            # ====================================================
-            # CASE B: 캐시 없음/만료 (전체 호출 -> API 3회 병렬)
-            # ====================================================
+                # 캐시 있으면 1m만 호출
+                k_1m = await task_1m
+                atr_15m = cached_data['atr']
+                rsi_3m = cached_data['rsi_3m']
             else:
-                # 3개 API 동시 요청 (asyncio.gather로 속도 최적화)
+                # 캐시 없으면 3개 다 호출 (병렬)
                 task_15m = self.client.futures_klines(symbol=symbol, interval='15m', limit=30)
                 task_3m = self.client.futures_klines(symbol=symbol, interval='3m', limit=30)
-                task_1m = self.client.futures_klines(symbol=symbol, interval='1m', limit=30)
                 
                 results = await asyncio.gather(task_15m, task_3m, task_1m, return_exceptions=True)
-                
                 k_15m, k_3m, k_1m = results
                 
-                # 하나라도 실패하면 중단
-                if isinstance(k_15m, Exception) or not k_15m: return None
-                if isinstance(k_3m, Exception) or not k_3m: return None
-                if isinstance(k_1m, Exception) or not k_1m: return None
-
-                # 1. 15m (ATR 계산)
+                if not k_15m or not k_3m or not k_1m: return None
+                
+                # 15m ATR 계산
                 df_15m = pd.DataFrame(k_15m).iloc[:, :6]
                 df_15m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
                 df_15m[['high', 'low', 'close']] = df_15m[['high', 'low', 'close']].astype(float)
-                atr = df_15m.ta.atr(length=ATR_PERIOD).iloc[-1]
+                atr_15m = df_15m.ta.atr(length=ATR_PERIOD).iloc[-1]
                 
-                # 2. 3m (RSI 계산)
+                # 3m RSI 계산
                 df_3m = pd.DataFrame(k_3m).iloc[:, :6]
                 df_3m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
                 df_3m['close'] = df_3m['close'].astype(float)
                 rsi_3m = df_3m.ta.rsi(length=14).iloc[-1]
                 
-                # 3. 1m (RSI & BB 계산)
-                df_1m = pd.DataFrame(k_1m).iloc[:, :6]
-                df_1m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
-                df_1m['close'] = df_1m['close'].astype(float)
-                rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
-                
-                bb = df_1m.ta.bbands(length=20, std=2.0)
-                bb_cols = bb.columns.tolist()
-                
-                # 캐시 업데이트 (중요)
+                # 캐시 업데이트
                 self.metrics_cache[symbol] = {
-                    'atr': atr,
+                    'atr': atr_15m,
                     'rsi_3m': rsi_3m,
                     'updated_at': now
                 }
-                
-                return {
-                    'atr': atr,
-                    'rsi_3m': rsi_3m,
-                    'rsi_1m': rsi_1m,
-                    'bb_low': bb[bb_cols[0]].iloc[-1],
-                    'bb_high': bb[bb_cols[2]].iloc[-1],
-                    'price': float(df_1m['close'].iloc[-1])
-                }
+
+            # ---------------------------------------------------
+            # 1m 데이터 처리 (핵심: 실시간 변동성 분석)
+            # ---------------------------------------------------
+            if not k_1m: return None
+            
+            df_1m = pd.DataFrame(k_1m).iloc[:, :6]
+            df_1m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+            df_1m[['open', 'high', 'low', 'close']] = df_1m[['open', 'high', 'low', 'close']].astype(float)
+            
+            # 1. 1m RSI
+            rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
+            
+            # 2. 볼린저 밴드
+            bb = df_1m.ta.bbands(length=20, std=2.0)
+            bb_cols = bb.columns.tolist() # [lower, mid, upper, bandwidth, percent]
+            bb_low = bb[bb_cols[0]].iloc[-1]
+            bb_high = bb[bb_cols[2]].iloc[-1]
+            
+            # 3. [신규] 1m ATR (평소 1분간 변동폭)
+            atr_1m_series = df_1m.ta.atr(length=14)
+            if atr_1m_series is None: return None
+            atr_1m = atr_1m_series.iloc[-1]
+            
+            # 4. [신규] 현재 봉의 실제 변동폭 (시가 - 종가)
+            # 양수 = 하락(음봉)의 길이, 음수 = 상승(양봉)의 길이
+            current_open = float(df_1m['open'].iloc[-1])
+            current_close = float(df_1m['close'].iloc[-1])
+            current_move = current_open - current_close 
+            
+            return {
+                'atr': atr_15m,         # 익절/물타기용 (15분 기준)
+                'atr_1m': atr_1m,       # [신규] 진입 판단용 (1분 기준 변동성)
+                'current_move': current_move, # [신규] 현재 봉의 움직임
+                'rsi_3m': rsi_3m,
+                'rsi_1m': rsi_1m,
+                'bb_low': bb_low,
+                'bb_high': bb_high,
+                'price': current_close
+            }
 
         except Exception as e:
-            # print(f"⚠️ 지표 계산 실패 ({symbol}): {e}") # 로그가 너무 많으면 주석 처리
+            # print(f"⚠️ 지표 계산 실패 ({symbol}): {e}")
             return None
 
     def calc_qty_from_usdt(self, symbol, usdt_val, price):
@@ -456,51 +452,50 @@ class BinanceSniperBot:
             print(f"⚠️ TP 갱신 오류 {symbol}: {e}")
 
     async def run_loop(self):
-        """메인 실행 루프"""
+        """메인 실행 루프 (ATR 기반 상대적 급락 포착)"""
         await self.initialize()
         print(f"🚀 ATR Sniper Bot 가동 시작! (Target: {INITIAL_ENTRY_PCT*100}% Entry / Max {SYMBOL_LIMIT} Symbols)")
         
-        # [추가] 생존 신고 타이머 초기화 (루프 밖)
+        # [설정] 진입 민감도 조절
+        IMPULSE_MULTIPLIER = 3.0  # 평소(ATR)보다 3배 이상 움직이면 '급락' 인정
+        RSI_ENTRY_TH = 28         # RSI 조건 완화 (10 -> 28)
+        
         last_heartbeat_time = time.time()
-        HEARTBEAT_INTERVAL = 300  # 300초 = 5분
+        HEARTBEAT_INTERVAL = 300  # 5분
         
         while True:
-            # [필수 수정] 루프 시작 시 변수 초기화 (에러 방지)
+            # 변수 초기화 (에러 방지)
             total_bal = 0.0
             avail_bal = 0.0
             exposure_pct = 0.0
             
             try:
                 # 1. 계좌 및 포지션 업데이트
-                # 만약 여기서 에러나면 except로 빠지지만, 혹시 모를 상황 대비
                 res = await self.update_account_data()
                 if res:
                     total_bal, avail_bal, exposure_pct = res
                     
-                # 만약 계좌 조회가 실패해서 잔고가 0이면, 이번 루프는 스킵해야 안전함
                 if total_bal <= 0:
-                    print("⚠️ 계좌 잔고 조회 실패 또는 잔고 부족. 잠시 대기...")
+                    print("⚠️ 계좌 잔고 조회 실패. 대기...")
                     await asyncio.sleep(5)
                     continue
 
                 current_pos_count = len(self.positions)
                 
-                # ========================================
-                # [업그레이드] 생존 신고 (Heartbeat) 로직
-                # ========================================
+                # 생존 신고 (Heartbeat)
                 current_time = time.time()
                 if current_time - last_heartbeat_time > HEARTBEAT_INTERVAL:
-                    # ... (생략: 기존 코드와 동일)
                     cand_info = "대기중..."
                     if self.best_candidate['symbol']:
                         c = self.best_candidate
-                        bb_mark = "O" if c['bb_break'] else "X"
+                        # move_ratio: 평소 대비 몇 배나 움직였는지
+                        ratio = c.get('move_ratio', 0.0)
                         cand_info = (
                             f"{c['symbol']}({c['type'][0]}) "
                             f"R1:{c['rsi_1m']:.1f} "
-                            f"R3:{c['rsi_3m']:.1f} "
-                            f"BB:{bb_mark}"
+                            f"Move:{ratio:.1f}x"
                         )
+                        # 보고 후 초기화
                         self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
 
                     print(
@@ -515,7 +510,6 @@ class BinanceSniperBot:
                 # A. 보유 포지션 관리 (물타기 & TP)
                 # ========================================
                 for sym, pos in self.positions.items():
-                    # 데이터 조회
                     metrics = await self.get_market_metrics(sym)
                     if not metrics: continue
                     
@@ -524,39 +518,38 @@ class BinanceSniperBot:
                     
                     # 2. 물타기(DCA) 체크
                     dca_count = pos['dca_count']
-                    if dca_count >= MAX_DCA_COUNT: continue
-                        
-                    required_gap = DCA_ATR_GAPS[dca_count] * metrics['atr']
                     
-                    # 조건 1: 가격 도달
+                    # 최대 차수 도달 시 스킵
+                    if dca_count >= MAX_DCA_COUNT: continue
+                    
+                    # [안전 수정] 인덱스 에러 방지 (dca_count가 배열 길이 넘지 않도록)
+                    safe_idx = min(dca_count, len(DCA_ATR_GAPS) - 1)
+                    required_gap = DCA_ATR_GAPS[safe_idx] * metrics['atr']
+                    
+                    # 가격 조건
                     price_condition = False
                     if pos['side'] == 'LONG':
-                        dist = pos['entry_price'] - metrics['price']
-                        if dist >= required_gap: price_condition = True
+                        if (pos['entry_price'] - metrics['price']) >= required_gap: price_condition = True
                     else:
-                        dist = metrics['price'] - pos['entry_price']
-                        if dist >= required_gap: price_condition = True
+                        if (metrics['price'] - pos['entry_price']) >= required_gap: price_condition = True
                         
-                    # 조건 2: 신호 재발생
+                    # 신호 재발생 조건 (추가 매수도 급락 시에만)
                     signal_condition = False
                     is_bad_price = (metrics['price'] < pos['entry_price']) if pos['side'] == 'LONG' else (metrics['price'] > pos['entry_price'])
                     
                     if is_bad_price:
+                        # 물타기 조건도 약간 완화 (RSI < 35)
                         if pos['side'] == 'LONG':
-                            if (metrics['rsi_3m'] < RSI_3M_LONG_TH and 
-                                metrics['rsi_1m'] < RSI_1M_LONG_TH and 
-                                metrics['price'] < metrics['bb_low']):
+                            if metrics['rsi_1m'] < 35 and metrics['price'] < metrics['bb_low']:
                                 signal_condition = True
                         else:
-                            if (metrics['rsi_3m'] > RSI_3M_SHORT_TH and 
-                                metrics['rsi_1m'] > RSI_1M_SHORT_TH and 
-                                metrics['price'] > metrics['bb_high']):
+                            if metrics['rsi_1m'] > 65 and metrics['price'] > metrics['bb_high']:
                                 signal_condition = True
                     
                     if price_condition or signal_condition:
                         dca_qty = pos['amount'] * DCA_MULTIPLIER
                         order_side = 'BUY' if pos['side'] == 'LONG' else 'SELL'
-                        print(f"🌊 [DCA TRIGGER] {sym} #{dca_count+1} (Price: {price_condition}, Signal: {signal_condition})")
+                        print(f"🌊 [DCA] {sym} #{dca_count+1} (Price:{price_condition}, Signal:{signal_condition})")
                         
                         success = await self.execute_order(sym, order_side, dca_qty)
                         if success:
@@ -564,78 +557,79 @@ class BinanceSniperBot:
                             await asyncio.sleep(1.0)
 
                 # ========================================
-                # B. 신규 진입 스캔 (포지션 여유 있을 때만)
+                # B. 신규 진입 스캔 (평소 대비 3배 급변 포착)
                 # ========================================
                 if current_pos_count < SYMBOL_LIMIT:
                     import random
                     scan_candidates = [s for s in self.symbols if s not in self.positions]
-                    # [안전 설정] 한 번에 10개만 스캔
+                    # API 안전을 위해 10개씩만 스캔
                     scan_batch = random.sample(scan_candidates, min(len(scan_candidates), 10))
                     
                     for sym in scan_batch:
                         if len(self.positions) >= SYMBOL_LIMIT: break
                         
                         metrics = await self.get_market_metrics(sym)
-                        # [안전 설정] API 과부하 방지 딜레이
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.2) # API 과부하 방지
                         
                         if not metrics: continue
                         
-                        # 롱/숏 진입 체크
+                        atr_1m = metrics['atr_1m']
+                        current_move = metrics['current_move'] # 양수:하락, 음수:상승
+                        
+                        # 변동성 비율 (이번 봉 길이 / 평소 길이)
+                        # 절대값으로 계산하여 상승/하락 모두 비율 확인
+                        # 0으로 나누기 방지
+                        move_ratio = abs(current_move) / atr_1m if atr_1m > 1e-9 else 0
+                        
                         entry_signal = None
-                        if (metrics['rsi_3m'] < RSI_3M_LONG_TH and 
-                            metrics['rsi_1m'] < RSI_1M_LONG_TH and 
-                            metrics['price'] < metrics['bb_low']):
+                        
+                        # [LONG 진입] 
+                        # 1. RSI < 28 (과매도)
+                        # 2. 하락폭(current_move)이 평소의 3배 이상 (패닉셀)
+                        if (metrics['rsi_1m'] < RSI_ENTRY_TH and 
+                            current_move > (atr_1m * IMPULSE_MULTIPLIER)):
+                            
+                            print(f"📉 [PANIC] {sym} 평소보다 {move_ratio:.1f}배 급락! (RSI:{metrics['rsi_1m']:.1f})")
                             entry_signal = 'LONG'
-                        elif (metrics['rsi_3m'] > RSI_3M_SHORT_TH and 
-                              metrics['rsi_1m'] > RSI_1M_SHORT_TH and 
-                              metrics['price'] > metrics['bb_high']):
+                            
+                        # [SHORT 진입]
+                        # 1. RSI > 72 (과매수)
+                        # 2. 상승폭(-current_move)이 평소의 3배 이상 (패닉바잉)
+                        elif (metrics['rsi_1m'] > (100 - RSI_ENTRY_TH) and 
+                              (-current_move) > (atr_1m * IMPULSE_MULTIPLIER)):
+                              
+                            print(f"📈 [SHOOT] {sym} 평소보다 {move_ratio:.1f}배 급등! (RSI:{metrics['rsi_1m']:.1f})")
                             entry_signal = 'SHORT'
                             
                         if entry_signal:
-                            # 여기서 total_bal 사용 (이제 안전함)
                             entry_val = total_bal * INITIAL_ENTRY_PCT
                             required_margin = entry_val / LEVERAGE
                             
-                            if avail_bal < required_margin:
-                                print(f"⚠️ [SKIP] {sym} 증거금 부족 (Need: {required_margin:.2f})")
-                                continue
-                                
-                            qty = self.calc_qty_from_usdt(sym, entry_val, metrics['price'])
-                            
-                            if qty > 0:
-                                side = 'BUY' if entry_signal == 'LONG' else 'SELL'
-                                print(f"🎯 [SNIPER ENTRY] {sym} {entry_signal} (RSI: {metrics['rsi_1m']:.1f})")
-                                
-                                success = await self.execute_order(sym, side, qty)
-                                if success:
-                                    self.state.update_position(sym, entry_signal, 0)
-                                    await asyncio.sleep(1.0)
-                                    self.positions[sym] = {'dummy': True} 
-
-                        # 후보 모니터링 로직
-                        dist_long = metrics['rsi_1m'] - RSI_1M_LONG_TH
-                        dist_short = RSI_1M_SHORT_TH - metrics['rsi_1m']
-                        
-                        is_long_closer = dist_long < dist_short
-                        target_type = "LONG" if is_long_closer else "SHORT"
-                        current_gap = dist_long if is_long_closer else dist_short
-
-                        if current_gap < self.best_candidate['gap']:
-                            bb_cond = False
-                            if target_type == "LONG":
-                                bb_cond = metrics['price'] < metrics['bb_low']
+                            if avail_bal >= required_margin:
+                                qty = self.calc_qty_from_usdt(sym, entry_val, metrics['price'])
+                                if qty > 0:
+                                    side = 'BUY' if entry_signal == 'LONG' else 'SELL'
+                                    print(f"🎯 [ENTRY] {sym} {entry_signal} (Qty:{qty})")
+                                    
+                                    success = await self.execute_order(sym, side, qty)
+                                    if success:
+                                        self.state.update_position(sym, entry_signal, 0)
+                                        await asyncio.sleep(1.0)
+                                        self.positions[sym] = {'dummy': True}
                             else:
-                                bb_cond = metrics['price'] > metrics['bb_high']
+                                print(f"⚠️ [SKIP] {sym} 증거금 부족")
 
+                        # [모니터링] 가장 강력한 후보 기록
+                        if move_ratio > self.best_candidate.get('move_ratio', 0):
+                            target_type = "LONG" if current_move > 0 else "SHORT"
                             self.best_candidate = {
                                 'symbol': sym,
-                                'gap': current_gap,
                                 'type': target_type,
                                 'rsi_1m': metrics['rsi_1m'],
                                 'rsi_3m': metrics['rsi_3m'],
-                                'bb_break': bb_cond,
-                                'price': metrics['price']
+                                'move_ratio': move_ratio, # 몇 배나 셌는지
+                                'bb_break': True, # 호환성 유지용 더미
+                                'gap': 0          # 호환성 유지용 더미
                             }
                             
             except Exception as e:
