@@ -21,10 +21,15 @@ from binance.exceptions import BinanceAPIException
 # ==========================================
 # ⚙️ 1. 사용자 설정 (CONFIG)
 # ==========================================
-# API 키는 환경 변수에서 로드하는 것을 권장합니다. (Railway Variables)
-API_KEY = os.getenv("BINANCE_API_KEY", "YOUR_API_KEY_HERE")
-API_SECRET = os.getenv("BINANCE_API_SECRET", "YOUR_SECRET_KEY_HERE")
+# 새 코드 (환경 변수 강제)
+API_KEY = os.environ.get("BINANCE_API_KEY")
+API_SECRET = os.environ.get("BINANCE_API_SECRET")
 
+if not API_KEY or not API_SECRET:
+    print("❌ 환경 변수 오류: BINANCE_API_KEY 또는 SECRET이 설정되지 않았습니다.")
+    # 디버깅용: 현재 설정된 모든 환경 변수 이름만 출력 (값은 보안상 출력 금지)
+    print("설정된 변수 목록:", list(os.environ.keys()))
+    sys.exit(1)
 # ----------------- 전략 파라미터 -----------------
 # 1. 심볼 및 리스크
 SYMBOL_LIMIT = 3            # 총 보유 심볼 수 (Long + Short 합계)
