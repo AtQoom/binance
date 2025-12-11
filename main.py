@@ -79,7 +79,9 @@ class StateManager:
         self.file = STATE_FILE
         self.data = {} # {symbol: {'dca_count': 0, 'side': 'LONG'}}
         self.load()
-
+        # [추가] 모니터링용: 가장 유력했던 진입 후보 정보 저장
+        self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
+        
     def load(self):
         if os.path.exists(self.file):
             try:
@@ -373,22 +375,28 @@ class BinanceSniperBot:
                 current_pos_count = len(self.positions)
                 
                 # ========================================
-                # [추가] 생존 신고 (Heartbeat) 로직
-                # (계좌 업데이트 직후에 배치)
+                # [수정] 생존 신고 (Heartbeat) 로직
                 # ========================================
                 current_time = time.time()
                 if current_time - last_heartbeat_time > HEARTBEAT_INTERVAL:
-                    try:
-                        ticker = await self.client.futures_symbol_ticker(symbol="BTCUSDT")
-                        btc_price = float(ticker['price'])
-                    except:
-                        btc_price = 0.0
+                    # ... (BTC 가격 조회 코드 생략) ...
+
+                    # 후보 정보 포맷팅
+                    cand_info = "없음"
+                    if self.best_candidate['symbol']:
+                        c = self.best_candidate
+                        # RSI가 목표보다 얼마나 남았는지 (+면 부족, -면 이미 돌파했으나 다른 조건 미달)
+                        status_msg = f"{c['symbol']}({c['type']}) RSI:{c['rsi_1m']:.1f}"
+                        cand_info = status_msg
+                        
+                        # 출력 후 초기화 (다음 5분을 위해)
+                        self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
 
                     print(
-                        f"💓 [생존신고] 자산: ${total_bal:.2f} | "
-                        f"포지션: {current_pos_count}개 | "
-                        f"1배 노출: {exposure_pct:.1f}% | "
-                        f"BTC: ${btc_price:,.0f}"
+                        f"💓 [생존] 자산:${total_bal:.1f} | "
+                        f"포지션:{current_pos_count} | "
+                        f"1배:{exposure_pct:.1f}% | "
+                        f"🔥근접: {cand_info}"
                     )
                     last_heartbeat_time = current_time
                 
@@ -515,7 +523,32 @@ class BinanceSniperBot:
                                     await asyncio.sleep(1.0)
                                     # 포지션 딕셔너리에 즉시 반영 (중복 진입 방지)
                                     self.positions[sym] = {'dummy': True} 
-
+                        # [추가] 모니터링: 진입 실패했더라도, 얼마나 근접했는지 기록
+                        # 롱 기준: RSI가 낮을수록 좋음 (거리 = 현재RSI - 목표RSI)
+                        # 숏 기준: RSI가 높을수록 좋음 (거리 = 목표RSI - 현재RSI)
+                        # 단순화를 위해 '1분 RSI'가 얼마나 극단적인지만 기록
+                        rsi_val = metrics['rsi_1m']
+                        
+                        # 롱 관점 거리 (목표 25보다 얼마나 먼가?)
+                        dist_long = rsi_val - RSI_1M_LONG_TH
+                        # 숏 관점 거리 (목표 75보다 얼마나 먼가?)
+                        dist_short = RSI_1M_SHORT_TH - rsi_val
+                        
+                        # 둘 중 더 가까운 것 선택 (음수면 이미 돌파한 것)
+                        closest_dist = min(dist_long, dist_short)
+                        
+                        # 기존 기록보다 더 강력한(조건에 가까운) 놈이면 갱신
+                        if closest_dist < self.best_candidate['gap']:
+                            signal_type = "LONG" if dist_long < dist_short else "SHORT"
+                            self.best_candidate = {
+                                'symbol': sym,
+                                'rsi_1m': rsi_val,
+                                'gap': closest_dist,
+                                'type': signal_type,
+                                'price': metrics['price'],
+                                'time': time.strftime("%H:%M:%S")
+                            }
+                            
             except Exception as e:
                 print(f"❌ Main Loop Error: {e}")
                 await asyncio.sleep(5)
