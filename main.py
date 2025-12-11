@@ -459,7 +459,7 @@ class BinanceSniperBot:
         
         # [설정] 진입 파라미터
         IMPULSE_MULTIPLIER = 3.0  # 평소(ATR)보다 3배 급변 시 '급락' 인정
-        RSI_ENTRY_TH = 28         # 1분 RSI 조건 (급락 조건이 있으므로 약간 완화)
+        RSI_ENTRY_TH = 16         # 1분 RSI 조건 (급락 조건이 있으므로 약간 완화)
         
         # 3분 RSI 필터 (추세 확인용)
         RSI_3M_LONG = 30
