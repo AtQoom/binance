@@ -493,10 +493,12 @@ class BinanceSniperBot:
                     if self.best_candidate['symbol']:
                         c = self.best_candidate
                         ratio = c.get('move_ratio', 0.0)
+                        bb_mark = "O" if c.get('bb_break') else "X"
                         cand_info = (
                             f"{c['symbol']}({c['type'][0]}) "
                             f"R1:{c['rsi_1m']:.1f} "
                             f"R3:{c['rsi_3m']:.1f} "
+                            f"BB:{bb_mark} "
                             f"Move:{ratio:.1f}x"
                         )
                         self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
@@ -533,13 +535,12 @@ class BinanceSniperBot:
                     else:
                         if (metrics['price'] - pos['entry_price']) >= required_gap: price_condition = True
                         
-                    # 신호 재발생 조건 (DCA도 안전하게)
+                    # 신호 재발생 조건
                     signal_condition = False
                     is_bad_price = (metrics['price'] < pos['entry_price']) if pos['side'] == 'LONG' else (metrics['price'] > pos['entry_price'])
                     
                     if is_bad_price:
                         if pos['side'] == 'LONG':
-                            # 물타기는 1분 RSI + 볼밴 하단만 체크 (급락 여부는 필수 아님)
                             if metrics['rsi_1m'] < 35 and metrics['price'] < metrics['bb_low']:
                                 signal_condition = True
                         else:
@@ -579,30 +580,38 @@ class BinanceSniperBot:
                         
                         entry_signal = None
                         
-                        # [LONG 진입 조건 - 4중 필터]
-                        # 1. 추세 과매도: 3분 RSI < 30 (기존)
-                        # 2. 볼밴 이탈: 현재가 < 볼밴 하단 (기존)
-                        # 3. 단기 과매도: 1분 RSI < 28 (기존 10에서 완화)
-                        # 4. 급락 발생: 변동폭 > 평소의 3배 (신규)
+                        # [LONG 진입 조건]
+                        # 1. 3분 RSI < 30
+                        # 2. 볼밴 하단 이탈
+                        # 3. 1분 RSI < 28
+                        # 4. 급락 발생 (평소의 3배)
                         if (metrics['rsi_3m'] < RSI_3M_LONG and
                             metrics['price'] < metrics['bb_low'] and
                             metrics['rsi_1m'] < RSI_ENTRY_TH and 
                             current_move > (atr_1m * IMPULSE_MULTIPLIER)):
                             
-                            print(f"📉 [PANIC LONG] {sym} 3배 급락! (R3:{metrics['rsi_3m']:.1f} R1:{metrics['rsi_1m']:.1f} Move:{move_ratio:.1f}x)")
+                            print(
+                                f"📉 [PANIC LONG] {sym} | "
+                                f"R3:{metrics['rsi_3m']:.1f} "
+                                f"R1:{metrics['rsi_1m']:.1f} "
+                                f"BB:LOW(O) "
+                                f"Move:{move_ratio:.1f}x"
+                            )
                             entry_signal = 'LONG'
                             
-                        # [SHORT 진입 조건 - 4중 필터]
-                        # 1. 추세 과매수: 3분 RSI > 70
-                        # 2. 볼밴 돌파: 현재가 > 볼밴 상단
-                        # 3. 단기 과매수: 1분 RSI > 72
-                        # 4. 급등 발생: 변동폭 > 평소의 3배
+                        # [SHORT 진입 조건]
                         elif (metrics['rsi_3m'] > RSI_3M_SHORT and
                               metrics['price'] > metrics['bb_high'] and
                               metrics['rsi_1m'] > (100 - RSI_ENTRY_TH) and 
                               (-current_move) > (atr_1m * IMPULSE_MULTIPLIER)):
                               
-                            print(f"📈 [SHOOT SHORT] {sym} 3배 급등! (R3:{metrics['rsi_3m']:.1f} R1:{metrics['rsi_1m']:.1f} Move:{move_ratio:.1f}x)")
+                            print(
+                                f"📈 [SHOOT SHORT] {sym} | "
+                                f"R3:{metrics['rsi_3m']:.1f} "
+                                f"R1:{metrics['rsi_1m']:.1f} "
+                                f"BB:HIGH(O) "
+                                f"Move:{move_ratio:.1f}x"
+                            )
                             entry_signal = 'SHORT'
                             
                         if entry_signal:
@@ -613,7 +622,16 @@ class BinanceSniperBot:
                                 qty = self.calc_qty_from_usdt(sym, entry_val, metrics['price'])
                                 if qty > 0:
                                     side = 'BUY' if entry_signal == 'LONG' else 'SELL'
-                                    print(f"🎯 [ENTRY] {sym} {entry_signal} (Qty:{qty})")
+                                    
+                                    # 상세 진입 로그 출력
+                                    bb_status = "LOW" if entry_signal == 'LONG' else "HIGH"
+                                    print(
+                                        f"🎯 [ENTRY] {sym} {entry_signal} (Qty:{qty}) | "
+                                        f"R1:{metrics['rsi_1m']:.1f} "
+                                        f"R3:{metrics['rsi_3m']:.1f} "
+                                        f"BB:{bb_status}(O) "
+                                        f"Move:{move_ratio:.1f}x"
+                                    )
                                     
                                     success = await self.execute_order(sym, side, qty)
                                     if success:
@@ -626,13 +644,21 @@ class BinanceSniperBot:
                         # [모니터링] 가장 강력한 후보 기록
                         if move_ratio > self.best_candidate.get('move_ratio', 0):
                             target_type = "LONG" if current_move > 0 else "SHORT"
+                            
+                            # BB 조건 충족 여부 체크
+                            bb_check = False
+                            if target_type == "LONG":
+                                if metrics['price'] < metrics['bb_low']: bb_check = True
+                            else:
+                                if metrics['price'] > metrics['bb_high']: bb_check = True
+
                             self.best_candidate = {
                                 'symbol': sym,
                                 'type': target_type,
                                 'rsi_1m': metrics['rsi_1m'],
                                 'rsi_3m': metrics['rsi_3m'],
                                 'move_ratio': move_ratio,
-                                'bb_break': True, 
+                                'bb_break': bb_check,
                                 'gap': 0
                             }
                             
