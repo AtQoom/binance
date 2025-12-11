@@ -4,6 +4,12 @@ import math
 import json
 import os
 import sys
+import warnings  # [추가]
+
+# [추가] 지저분한 경고 메시지 숨기기
+warnings.filterwarnings("ignore", category=UserWarning, module='pandas_ta_remake')
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 
