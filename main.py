@@ -375,29 +375,37 @@ class BinanceSniperBot:
                 current_pos_count = len(self.positions)
                 
                 # ========================================
-                # [수정] 생존 신고 (Heartbeat) 로직
+                # [업그레이드] 생존 신고 (Heartbeat) 로직
                 # ========================================
                 current_time = time.time()
                 if current_time - last_heartbeat_time > HEARTBEAT_INTERVAL:
-                    # ... (BTC 가격 조회 코드 생략) ...
 
-                    # 후보 정보 포맷팅
-                    cand_info = "없음"
+                    # 후보 정보 포맷팅 (상세 버전)
+                    cand_info = "대기중..."
                     if self.best_candidate['symbol']:
                         c = self.best_candidate
-                        # RSI가 목표보다 얼마나 남았는지 (+면 부족, -면 이미 돌파했으나 다른 조건 미달)
-                        status_msg = f"{c['symbol']}({c['type']}) RSI:{c['rsi_1m']:.1f}"
-                        cand_info = status_msg
                         
-                        # 출력 후 초기화 (다음 5분을 위해)
+                        # BB 조건 표시 (O:만족 / X:미달)
+                        bb_mark = "O" if c['bb_break'] else "X"
+                        
+                        # 로그 예: "BTC(L) R1:28.5 R3:35.0 BB:X"
+                        # 해석: BTC 롱 관점 / 1분RSI 28.5 / 3분RSI 35.0 / 볼밴돌파 실패
+                        cand_info = (
+                            f"{c['symbol']}({c['type'][0]}) "  # L 또는 S로 줄임
+                            f"R1:{c['rsi_1m']:.1f} "
+                            f"R3:{c['rsi_3m']:.1f} "
+                            f"BB:{bb_mark}"
+                        )
+                        
+                        # 초기화
                         self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
 
                     print(
                         f"💓 [생존] 자산:${total_bal:.1f} | "
                         f"포지션:{current_pos_count} | "
                         f"1배:{exposure_pct:.1f}% | "
-                        f"🔥근접: {cand_info}"
-                    )
+                        f"🔥후보: {cand_info}"
+                        
                     last_heartbeat_time = current_time
                 
                 # ========================================
@@ -523,30 +531,34 @@ class BinanceSniperBot:
                                     await asyncio.sleep(1.0)
                                     # 포지션 딕셔너리에 즉시 반영 (중복 진입 방지)
                                     self.positions[sym] = {'dummy': True} 
-                        # [추가] 모니터링: 진입 실패했더라도, 얼마나 근접했는지 기록
-                        # 롱 기준: RSI가 낮을수록 좋음 (거리 = 현재RSI - 목표RSI)
-                        # 숏 기준: RSI가 높을수록 좋음 (거리 = 목표RSI - 현재RSI)
-                        # 단순화를 위해 '1분 RSI'가 얼마나 극단적인지만 기록
-                        rsi_val = metrics['rsi_1m']
+                        # [업그레이드] 모니터링: 상세 조건 기록
+                        # 롱/숏 중 어느 쪽에 더 가까운지 판단
+                        # (단순 거리 계산: RSI 1m 기준)
+                        dist_long = metrics['rsi_1m'] - RSI_1M_LONG_TH
+                        dist_short = RSI_1M_SHORT_TH - metrics['rsi_1m']
                         
-                        # 롱 관점 거리 (목표 25보다 얼마나 먼가?)
-                        dist_long = rsi_val - RSI_1M_LONG_TH
-                        # 숏 관점 거리 (목표 75보다 얼마나 먼가?)
-                        dist_short = RSI_1M_SHORT_TH - rsi_val
-                        
-                        # 둘 중 더 가까운 것 선택 (음수면 이미 돌파한 것)
-                        closest_dist = min(dist_long, dist_short)
-                        
-                        # 기존 기록보다 더 강력한(조건에 가까운) 놈이면 갱신
-                        if closest_dist < self.best_candidate['gap']:
-                            signal_type = "LONG" if dist_long < dist_short else "SHORT"
+                        is_long_closer = dist_long < dist_short
+                        target_type = "LONG" if is_long_closer else "SHORT"
+                        current_gap = dist_long if is_long_closer else dist_short
+
+                        # 더 강력한(조건에 가까운) 후보 발견 시 갱신
+                        if current_gap < self.best_candidate['gap']:
+                            # BB 돌파 여부 체크 (O/X)
+                            # 롱이면 가격 < 하단, 숏이면 가격 > 상단이어야 함
+                            bb_cond = False
+                            if target_type == "LONG":
+                                bb_cond = metrics['price'] < metrics['bb_low']
+                            else:
+                                bb_cond = metrics['price'] > metrics['bb_high']
+
                             self.best_candidate = {
                                 'symbol': sym,
-                                'rsi_1m': rsi_val,
-                                'gap': closest_dist,
-                                'type': signal_type,
-                                'price': metrics['price'],
-                                'time': time.strftime("%H:%M:%S")
+                                'gap': current_gap,
+                                'type': target_type,
+                                'rsi_1m': metrics['rsi_1m'],
+                                'rsi_3m': metrics['rsi_3m'],
+                                'bb_break': bb_cond,  # True면 BB 조건 만족
+                                'price': metrics['price']
                             }
                             
             except Exception as e:
