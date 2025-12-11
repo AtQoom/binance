@@ -136,20 +136,20 @@ class BinanceSniperBot:
         self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999} 
 
     async def initialize(self):
-        """API 연결 및 초기 데이터 로드 (필터링 강화)"""
+        """API 연결 및 초기 데이터 로드 (필터링 강화: 신규 상장 제외)"""
         print("🔌 Binance API 연결 중...")
         self.client = await AsyncClient.create(API_KEY, API_SECRET)
         
-        # 1. 거래소 정보 로드
         info = await self.client.futures_exchange_info()
         count = 0
         
-        # [제외 1] 변동성 없는 스테이블 코인
-        exclude_stable = ['USDCUSDT', 'USDPUSDT', 'FDUSDUSDT', 'BUSDUSDT', 'TUSDUSDT'] 
+        # 제외 목록 (스테이블 등)
+        exclude_coins = ['USDCUSDT', 'USDPUSDT', 'FDUSDUSDT', 'BUSDUSDT', 'TUSDUSDT'] 
         
-        # [제외 2] 상폐 예정이거나 위험한 코인 (수동 업데이트 필요 시 여기에 추가)
-        # 예: 최근 이슈가 된 코인들
-        exclude_delist = ['BTSUSDT', 'PERLUSDT', 'TORNUSDT', 'WTCUSDT'] 
+        # [설정] 신규 상장 필터: 14일 (밀리초 단위)
+        # 14일 * 24시간 * 60분 * 60초 * 1000밀리초
+        NEW_LISTING_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000
+        current_time_ms = time.time() * 1000
 
         for s in info['symbols']:
             # 1. 기본 상태 체크
@@ -158,19 +158,22 @@ class BinanceSniperBot:
 
             sym = s['symbol']
 
-            # 2. 제외 리스트 체크
-            if sym in exclude_stable or sym in exclude_delist:
+            # 2. 명시적 제외 리스트 체크
+            if sym in exclude_coins:
                 continue
 
-            # [제외 3] 레버리지 토큰 및 기타 위험 종목 자동 필터 (이름 기반)
-            # UP/DOWN 토큰이나, BUSD 페어 등은 제외
-            if 'UPUSDT' in sym or 'DOWNUSDT' in sym:
-                continue
-            
-            # [제외 4] 거래 시작일(OnboardDate)이 너무 최근인 신규 상장 코인 제외 (옵션)
-            # 데이터가 부족해서 지표가 튈 수 있음. (필요하면 추가 구현 가능)
+            # 3. [추가됨] 신규 상장 코인 필터링
+            # onboardDate가 현재 시간보다 14일 이내라면 제외
+            onboard_date = s.get('onboardDate') # 데이터가 없을 수도 있으니 get 사용
+            if onboard_date:
+                time_since_listing = current_time_ms - onboard_date
+                if time_since_listing < NEW_LISTING_THRESHOLD_MS:
+                    # print(f"👶 신규 상장 제외: {sym} (상장 {int(time_since_listing/1000/3600/24)}일 됨)")
+                    continue
 
             self.symbols.append(sym)
+            
+            # ... (이하 필터 정보 파싱 로직 동일) ...
             
             # 필터 정보 파싱 (정밀도)
             prec_qty = 0
@@ -193,7 +196,7 @@ class BinanceSniperBot:
             }
             count += 1
         
-        print(f"✅ 거래 가능 심볼 로드: {count}개 (스테이블/위험군 제외됨)")
+        print(f"✅ 거래 가능 심볼 로드: {count}개 (스테이블/신규상장 제외됨)")
 
     async def update_account_data(self):
         """계좌 잔고 및 포지션 동기화 (핵심)"""
