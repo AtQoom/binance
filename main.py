@@ -453,7 +453,7 @@ class BinanceSniperBot:
 
     # (주의) 앞에 공백 4칸 들여쓰기 필수
     async def run_loop(self):
-        """메인 실행 루프 (4중 필터: 3m RSI + 1m RSI + BB + ATR Impulse)"""
+        """메인 실행 루프 (4중 필터: 3m RSI + 1m RSI + BB + ATR Impulse + 최소주문보정)"""
         await self.initialize()
         print(f"🚀 ATR Sniper Bot 가동 시작! (Target: {INITIAL_ENTRY_PCT*100}% Entry / Max {SYMBOL_LIMIT} Symbols)")
         
@@ -581,10 +581,6 @@ class BinanceSniperBot:
                         entry_signal = None
                         
                         # [LONG 진입 조건]
-                        # 1. 3분 RSI < 30
-                        # 2. 볼밴 하단 이탈
-                        # 3. 1분 RSI < 28
-                        # 4. 급락 발생 (평소의 3배)
                         if (metrics['rsi_3m'] < RSI_3M_LONG and
                             metrics['price'] < metrics['bb_low'] and
                             metrics['rsi_1m'] < RSI_ENTRY_TH and 
@@ -618,6 +614,10 @@ class BinanceSniperBot:
                             entry_val = total_bal * INITIAL_ENTRY_PCT
                             required_margin = entry_val / LEVERAGE
                             
+                            # [핵심 추가] 최소 주문 금액보다 작으면 강제로 올림 (1.1배 여유)
+                            if entry_val < MIN_NOTIONAL:
+                                entry_val = MIN_NOTIONAL * 1.1
+
                             if avail_bal >= required_margin:
                                 qty = self.calc_qty_from_usdt(sym, entry_val, metrics['price'])
                                 if qty > 0:
@@ -639,7 +639,7 @@ class BinanceSniperBot:
                                         await asyncio.sleep(1.0)
                                         self.positions[sym] = {'dummy': True}
                             else:
-                                print(f"⚠️ [SKIP] {sym} 증거금 부족")
+                                print(f"⚠️ [SKIP] {sym} 증거금 부족 (Need: ${required_margin:.2f})")
 
                         # [모니터링] 가장 강력한 후보 기록
                         if move_ratio > self.best_candidate.get('move_ratio', 0):
