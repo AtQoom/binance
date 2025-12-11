@@ -79,8 +79,6 @@ class StateManager:
         self.file = STATE_FILE
         self.data = {} # {symbol: {'dca_count': 0, 'side': 'LONG'}}
         self.load()
-        # [추가] 모니터링용: 가장 유력했던 진입 후보 정보 저장
-        self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
         
     def load(self):
         if os.path.exists(self.file):
@@ -131,6 +129,9 @@ class BinanceSniperBot:
         self.positions = {}     # 현재 보유 포지션 (API 동기화)
         self.symbol_info = {}   # 심볼별 정밀도/최소수량 정보
         self.last_tp_update = {} # TP 갱신 시간 기록
+        
+        # [수정 위치] 여기다가 넣어야 합니다!
+        self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999} 
 
     async def initialize(self):
         """API 연결 및 초기 데이터 로드"""
