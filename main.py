@@ -79,8 +79,6 @@ class StateManager:
         self.file = STATE_FILE
         self.data = {} # {symbol: {'dca_count': 0, 'side': 'LONG'}}
         self.load()
-        self.state = StateManager()
-        self.metrics_cache = {} 
         
     def load(self):
         if os.path.exists(self.file):
@@ -124,15 +122,17 @@ class BinanceSniperBot:
     def __init__(self):
         self.client = None
         self.bm = None
-        self.state = StateManager()
+        self.state = StateManager() # 여기서 딱 한 번만 생성됨 (정상)
         
         # 런타임 데이터
-        self.symbols = []       # 거래 가능 심볼 리스트
-        self.positions = {}     # 현재 보유 포지션 (API 동기화)
-        self.symbol_info = {}   # 심볼별 정밀도/최소수량 정보
-        self.last_tp_update = {} # TP 갱신 시간 기록
+        self.symbols = []
+        self.positions = {}
+        self.symbol_info = {}
+        self.last_tp_update = {}
         
-        # [수정 위치] 여기다가 넣어야 합니다!
+        # [필수] 캐시 저장소는 여기에 있어야 합니다!
+        self.metrics_cache = {} 
+        
         self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999} 
 
     async def initialize(self):
