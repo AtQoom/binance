@@ -9,7 +9,6 @@ from datetime import datetime
 
 # 3rd party libraries
 import pandas as pd
-import pandas_ta as ta
 import pandas_ta_remake as ta
 from binance.client import AsyncClient
 from binance import BinanceSocketManager
