@@ -79,6 +79,8 @@ class StateManager:
         self.file = STATE_FILE
         self.data = {} # {symbol: {'dca_count': 0, 'side': 'LONG'}}
         self.load()
+        self.state = StateManager()
+        self.metrics_cache = {} 
         
     def load(self):
         if os.path.exists(self.file):
@@ -233,59 +235,109 @@ class BinanceSniperBot:
 
     # (주의) 앞에 공백 4칸이 반드시 있어야 합니다.
     async def get_market_metrics(self, symbol):
-        """지표 계산 (15m ATR, 3m RSI, 1m RSI, BB)"""
+        """
+        [최적화됨] 하이브리드 캐싱 전략 적용
+        - ATR(15m), RSI(3m): 변동이 적으므로 60초간 캐시(Cache) 사용
+        - RSI(1m), Price, BB: 실시간성이 중요하므로 매번 API 호출
+        => API 요청량 대폭 감소 (IP Ban 방지) + 반응 속도 유지
+        """
         try:
-            # 1. 15m (ATR)
-            k_15m = await self.client.futures_klines(symbol=symbol, interval='15m', limit=30)
-            if not k_15m: return None
+            now = time.time()
             
-            df_15m = pd.DataFrame(k_15m).iloc[:, :6]
-            # [수정] pandas-ta가 인식할 수 있도록 컬럼명을 풀네임으로 변경
-            df_15m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
-            df_15m[['high', 'low', 'close']] = df_15m[['high', 'low', 'close']].astype(float)
+            # 1. 캐시 데이터 확인
+            cached_data = self.metrics_cache.get(symbol)
+            is_cache_valid = False
             
-            # 이제 컬럼을 명시하지 않아도 알아서 찾음
-            atr = df_15m.ta.atr(length=ATR_PERIOD).iloc[-1]
+            if cached_data:
+                # 60초 이내에 갱신된 데이터라면 유효함
+                if now - cached_data['updated_at'] < 60:
+                    is_cache_valid = True
             
-            # 2. 3m (RSI)
-            k_3m = await self.client.futures_klines(symbol=symbol, interval='3m', limit=30)
-            if not k_3m: return None
-            
-            df_3m = pd.DataFrame(k_3m).iloc[:, :6]
-            df_3m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
-            df_3m['close'] = df_3m['close'].astype(float)
-            rsi_3m = df_3m.ta.rsi(length=14).iloc[-1]
-            
-            # 3. 1m (RSI & BB)
-            k_1m = await self.client.futures_klines(symbol=symbol, interval='1m', limit=30)
-            if not k_1m: return None
-            
-            df_1m = pd.DataFrame(k_1m).iloc[:, :6]
-            df_1m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
-            df_1m['close'] = df_1m['close'].astype(float)
-            
-            rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
-            
-            # BB 계산
-            bb = df_1m.ta.bbands(length=20, std=2.0)
-            
-            # BB 컬럼 찾기
-            bb_cols = bb.columns.tolist()
-            bb_low = bb[bb_cols[0]].iloc[-1]
-            bb_high = bb[bb_cols[2]].iloc[-1]
-            
-            current_price = float(df_1m['close'].iloc[-1])
-            
-            return {
-                'atr': atr,
-                'rsi_3m': rsi_3m,
-                'rsi_1m': rsi_1m,
-                'bb_low': bb_low,
-                'bb_high': bb_high,
-                'price': current_price
-            }
+            # ====================================================
+            # CASE A: 캐시가 유효함 (가벼운 1m 캔들만 호출 -> API 1회)
+            # ====================================================
+            if is_cache_valid:
+                # 1m 캔들만 실시간 조회
+                k_1m = await self.client.futures_klines(symbol=symbol, interval='1m', limit=30)
+                if not k_1m: return None
+                
+                # 데이터프레임 변환
+                df_1m = pd.DataFrame(k_1m).iloc[:, :6]
+                df_1m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+                df_1m['close'] = df_1m['close'].astype(float)
+                
+                # 1m 지표 계산 (실시간)
+                rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
+                bb = df_1m.ta.bbands(length=20, std=2.0)
+                bb_cols = bb.columns.tolist()
+                
+                # 결과 조합 (캐시된 값 + 실시간 값)
+                return {
+                    'atr': cached_data['atr'],      # 캐시 사용
+                    'rsi_3m': cached_data['rsi_3m'], # 캐시 사용
+                    'rsi_1m': rsi_1m,               # 실시간
+                    'bb_low': bb[bb_cols[0]].iloc[-1], # 실시간
+                    'bb_high': bb[bb_cols[2]].iloc[-1],# 실시간
+                    'price': float(df_1m['close'].iloc[-1]) # 실시간
+                }
+
+            # ====================================================
+            # CASE B: 캐시 없음/만료 (전체 호출 -> API 3회 병렬)
+            # ====================================================
+            else:
+                # 3개 API 동시 요청 (asyncio.gather로 속도 최적화)
+                task_15m = self.client.futures_klines(symbol=symbol, interval='15m', limit=30)
+                task_3m = self.client.futures_klines(symbol=symbol, interval='3m', limit=30)
+                task_1m = self.client.futures_klines(symbol=symbol, interval='1m', limit=30)
+                
+                results = await asyncio.gather(task_15m, task_3m, task_1m, return_exceptions=True)
+                
+                k_15m, k_3m, k_1m = results
+                
+                # 하나라도 실패하면 중단
+                if isinstance(k_15m, Exception) or not k_15m: return None
+                if isinstance(k_3m, Exception) or not k_3m: return None
+                if isinstance(k_1m, Exception) or not k_1m: return None
+
+                # 1. 15m (ATR 계산)
+                df_15m = pd.DataFrame(k_15m).iloc[:, :6]
+                df_15m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+                df_15m[['high', 'low', 'close']] = df_15m[['high', 'low', 'close']].astype(float)
+                atr = df_15m.ta.atr(length=ATR_PERIOD).iloc[-1]
+                
+                # 2. 3m (RSI 계산)
+                df_3m = pd.DataFrame(k_3m).iloc[:, :6]
+                df_3m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+                df_3m['close'] = df_3m['close'].astype(float)
+                rsi_3m = df_3m.ta.rsi(length=14).iloc[-1]
+                
+                # 3. 1m (RSI & BB 계산)
+                df_1m = pd.DataFrame(k_1m).iloc[:, :6]
+                df_1m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+                df_1m['close'] = df_1m['close'].astype(float)
+                rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
+                
+                bb = df_1m.ta.bbands(length=20, std=2.0)
+                bb_cols = bb.columns.tolist()
+                
+                # 캐시 업데이트 (중요)
+                self.metrics_cache[symbol] = {
+                    'atr': atr,
+                    'rsi_3m': rsi_3m,
+                    'updated_at': now
+                }
+                
+                return {
+                    'atr': atr,
+                    'rsi_3m': rsi_3m,
+                    'rsi_1m': rsi_1m,
+                    'bb_low': bb[bb_cols[0]].iloc[-1],
+                    'bb_high': bb[bb_cols[2]].iloc[-1],
+                    'price': float(df_1m['close'].iloc[-1])
+                }
+
         except Exception as e:
-            print(f"⚠️ 지표 계산 실패 ({symbol}): {e}")
+            # print(f"⚠️ 지표 계산 실패 ({symbol}): {e}") # 로그가 너무 많으면 주석 처리
             return None
 
     def calc_qty_from_usdt(self, symbol, usdt_val, price):
