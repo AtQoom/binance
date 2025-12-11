@@ -451,20 +451,24 @@ class BinanceSniperBot:
         except Exception as e:
             print(f"⚠️ TP 갱신 오류 {symbol}: {e}")
 
+    # (주의) 앞에 공백 4칸 들여쓰기 필수
     async def run_loop(self):
-        """메인 실행 루프 (ATR 기반 상대적 급락 포착)"""
+        """메인 실행 루프 (4중 필터: 3m RSI + 1m RSI + BB + ATR Impulse)"""
         await self.initialize()
         print(f"🚀 ATR Sniper Bot 가동 시작! (Target: {INITIAL_ENTRY_PCT*100}% Entry / Max {SYMBOL_LIMIT} Symbols)")
         
-        # [설정] 진입 민감도 조절
-        IMPULSE_MULTIPLIER = 3.0  # 평소(ATR)보다 3배 이상 움직이면 '급락' 인정
-        RSI_ENTRY_TH = 28         # RSI 조건 완화 (10 -> 28)
+        # [설정] 진입 파라미터
+        IMPULSE_MULTIPLIER = 3.0  # 평소(ATR)보다 3배 급변 시 '급락' 인정
+        RSI_ENTRY_TH = 28         # 1분 RSI 조건 (급락 조건이 있으므로 약간 완화)
+        
+        # 3분 RSI 필터 (추세 확인용)
+        RSI_3M_LONG = 30
+        RSI_3M_SHORT = 70
         
         last_heartbeat_time = time.time()
         HEARTBEAT_INTERVAL = 300  # 5분
         
         while True:
-            # 변수 초기화 (에러 방지)
             total_bal = 0.0
             avail_bal = 0.0
             exposure_pct = 0.0
@@ -488,14 +492,13 @@ class BinanceSniperBot:
                     cand_info = "대기중..."
                     if self.best_candidate['symbol']:
                         c = self.best_candidate
-                        # move_ratio: 평소 대비 몇 배나 움직였는지
                         ratio = c.get('move_ratio', 0.0)
                         cand_info = (
                             f"{c['symbol']}({c['type'][0]}) "
                             f"R1:{c['rsi_1m']:.1f} "
+                            f"R3:{c['rsi_3m']:.1f} "
                             f"Move:{ratio:.1f}x"
                         )
-                        # 보고 후 초기화
                         self.best_candidate = {'symbol': None, 'rsi_1m': 50, 'gap': 999}
 
                     print(
@@ -518,11 +521,8 @@ class BinanceSniperBot:
                     
                     # 2. 물타기(DCA) 체크
                     dca_count = pos['dca_count']
-                    
-                    # 최대 차수 도달 시 스킵
                     if dca_count >= MAX_DCA_COUNT: continue
                     
-                    # [안전 수정] 인덱스 에러 방지 (dca_count가 배열 길이 넘지 않도록)
                     safe_idx = min(dca_count, len(DCA_ATR_GAPS) - 1)
                     required_gap = DCA_ATR_GAPS[safe_idx] * metrics['atr']
                     
@@ -533,13 +533,13 @@ class BinanceSniperBot:
                     else:
                         if (metrics['price'] - pos['entry_price']) >= required_gap: price_condition = True
                         
-                    # 신호 재발생 조건 (추가 매수도 급락 시에만)
+                    # 신호 재발생 조건 (DCA도 안전하게)
                     signal_condition = False
                     is_bad_price = (metrics['price'] < pos['entry_price']) if pos['side'] == 'LONG' else (metrics['price'] > pos['entry_price'])
                     
                     if is_bad_price:
-                        # 물타기 조건도 약간 완화 (RSI < 35)
                         if pos['side'] == 'LONG':
+                            # 물타기는 1분 RSI + 볼밴 하단만 체크 (급락 여부는 필수 아님)
                             if metrics['rsi_1m'] < 35 and metrics['price'] < metrics['bb_low']:
                                 signal_condition = True
                         else:
@@ -557,48 +557,52 @@ class BinanceSniperBot:
                             await asyncio.sleep(1.0)
 
                 # ========================================
-                # B. 신규 진입 스캔 (평소 대비 3배 급변 포착)
+                # B. 신규 진입 스캔 (4중 필터 적용)
                 # ========================================
                 if current_pos_count < SYMBOL_LIMIT:
                     import random
                     scan_candidates = [s for s in self.symbols if s not in self.positions]
-                    # API 안전을 위해 10개씩만 스캔
                     scan_batch = random.sample(scan_candidates, min(len(scan_candidates), 10))
                     
                     for sym in scan_batch:
                         if len(self.positions) >= SYMBOL_LIMIT: break
                         
                         metrics = await self.get_market_metrics(sym)
-                        await asyncio.sleep(0.2) # API 과부하 방지
+                        await asyncio.sleep(0.2)
                         
                         if not metrics: continue
                         
                         atr_1m = metrics['atr_1m']
                         current_move = metrics['current_move'] # 양수:하락, 음수:상승
                         
-                        # 변동성 비율 (이번 봉 길이 / 평소 길이)
-                        # 절대값으로 계산하여 상승/하락 모두 비율 확인
-                        # 0으로 나누기 방지
                         move_ratio = abs(current_move) / atr_1m if atr_1m > 1e-9 else 0
                         
                         entry_signal = None
                         
-                        # [LONG 진입] 
-                        # 1. RSI < 28 (과매도)
-                        # 2. 하락폭(current_move)이 평소의 3배 이상 (패닉셀)
-                        if (metrics['rsi_1m'] < RSI_ENTRY_TH and 
+                        # [LONG 진입 조건 - 4중 필터]
+                        # 1. 추세 과매도: 3분 RSI < 30 (기존)
+                        # 2. 볼밴 이탈: 현재가 < 볼밴 하단 (기존)
+                        # 3. 단기 과매도: 1분 RSI < 28 (기존 10에서 완화)
+                        # 4. 급락 발생: 변동폭 > 평소의 3배 (신규)
+                        if (metrics['rsi_3m'] < RSI_3M_LONG and
+                            metrics['price'] < metrics['bb_low'] and
+                            metrics['rsi_1m'] < RSI_ENTRY_TH and 
                             current_move > (atr_1m * IMPULSE_MULTIPLIER)):
                             
-                            print(f"📉 [PANIC] {sym} 평소보다 {move_ratio:.1f}배 급락! (RSI:{metrics['rsi_1m']:.1f})")
+                            print(f"📉 [PANIC LONG] {sym} 3배 급락! (R3:{metrics['rsi_3m']:.1f} R1:{metrics['rsi_1m']:.1f} Move:{move_ratio:.1f}x)")
                             entry_signal = 'LONG'
                             
-                        # [SHORT 진입]
-                        # 1. RSI > 72 (과매수)
-                        # 2. 상승폭(-current_move)이 평소의 3배 이상 (패닉바잉)
-                        elif (metrics['rsi_1m'] > (100 - RSI_ENTRY_TH) and 
+                        # [SHORT 진입 조건 - 4중 필터]
+                        # 1. 추세 과매수: 3분 RSI > 70
+                        # 2. 볼밴 돌파: 현재가 > 볼밴 상단
+                        # 3. 단기 과매수: 1분 RSI > 72
+                        # 4. 급등 발생: 변동폭 > 평소의 3배
+                        elif (metrics['rsi_3m'] > RSI_3M_SHORT and
+                              metrics['price'] > metrics['bb_high'] and
+                              metrics['rsi_1m'] > (100 - RSI_ENTRY_TH) and 
                               (-current_move) > (atr_1m * IMPULSE_MULTIPLIER)):
                               
-                            print(f"📈 [SHOOT] {sym} 평소보다 {move_ratio:.1f}배 급등! (RSI:{metrics['rsi_1m']:.1f})")
+                            print(f"📈 [SHOOT SHORT] {sym} 3배 급등! (R3:{metrics['rsi_3m']:.1f} R1:{metrics['rsi_1m']:.1f} Move:{move_ratio:.1f}x)")
                             entry_signal = 'SHORT'
                             
                         if entry_signal:
@@ -627,9 +631,9 @@ class BinanceSniperBot:
                                 'type': target_type,
                                 'rsi_1m': metrics['rsi_1m'],
                                 'rsi_3m': metrics['rsi_3m'],
-                                'move_ratio': move_ratio, # 몇 배나 셌는지
-                                'bb_break': True, # 호환성 유지용 더미
-                                'gap': 0          # 호환성 유지용 더미
+                                'move_ratio': move_ratio,
+                                'bb_break': True, 
+                                'gap': 0
                             }
                             
             except Exception as e:
