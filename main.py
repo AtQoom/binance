@@ -170,6 +170,7 @@ class BinanceSniperBot:
             # 1. 총 자산 (Wallet Balance) - 진입 비중 계산용
             total_wallet_balance = 0.0
             available_balance = 0.0
+            total_position_notional = 0.0
             
             for a in acc['assets']:
                 if a['asset'] == 'USDT':
@@ -178,17 +179,19 @@ class BinanceSniperBot:
                     break
             
             # 2. 포지션 동기화
-            # API에서 가져온 포지션과 로컬 상태(dca_count)를 매핑
             api_positions = {}
             for p in acc['positions']:
                 amt = float(p['positionAmt'])
                 if amt != 0:
                     sym = p['symbol']
                     side = 'LONG' if amt > 0 else 'SHORT'
-                    
-                    # 상태 파일에서 DCA 차수 가져오기 (없으면 0으로 간주)
+
+                    # 현재 포지션 명목가 (1배 기준 노출 금액)
+                    notional = float(p.get('notional', 0.0))
+                    total_position_notional += abs(notional)
+
                     saved_dca = self.state.get_dca_count(sym)
-                    
+
                     api_positions[sym] = {
                         'symbol': sym,
                         'side': side,
@@ -197,7 +200,7 @@ class BinanceSniperBot:
                         'unrealizedProfit': float(p['unrealizedProfit']),
                         'dca_count': saved_dca
                     }
-            
+
             self.positions = api_positions
             
             # 3. 상태 파일 청소 (청산된 포지션 제거)
@@ -208,11 +211,16 @@ class BinanceSniperBot:
                     self.state.remove_position(sym)
                     # print(f"🧹 청산 확인 및 상태 제거: {sym}")
 
-            return total_wallet_balance, available_balance
+            # 4. 1배 노출 비율 계산
+            exposure_pct = 0.0
+            if total_wallet_balance > 0:
+                exposure_pct = (total_position_notional / total_wallet_balance) * 100.0
+
+            return total_wallet_balance, available_balance, exposure_pct
 
         except Exception as e:
             print(f"❌ 계좌 업데이트 오류: {e}")
-            return 0, 0
+            return 0, 0, 0.0
 
     async def get_market_metrics(self, symbol):
         """지표 계산 (15m ATR, 3m RSI, 1m RSI, BB)"""
@@ -355,7 +363,7 @@ class BinanceSniperBot:
         while True:
             try:
                 # 1. 계좌 및 포지션 업데이트
-                total_bal, avail_bal = await self.update_account_data()
+                total_bal, avail_bal, exposure_pct = await self.update_account_data()
                 current_pos_count = len(self.positions)
                 
                 # ========================================
@@ -365,13 +373,17 @@ class BinanceSniperBot:
                 current_time = time.time()
                 if current_time - last_heartbeat_time > HEARTBEAT_INTERVAL:
                     try:
-                        # BTC 가격 조회 (정보용)
                         ticker = await self.client.futures_symbol_ticker(symbol="BTCUSDT")
                         btc_price = float(ticker['price'])
                     except:
                         btc_price = 0.0
 
-                    print(f"💓 [생존신고] 자산: ${total_bal:.2f} | 포지션: {current_pos_count}개 | BTC: ${btc_price:,.0f}")
+                    print(
+                        f"💓 [생존신고] 자산: ${total_bal:.2f} | "
+                        f"포지션: {current_pos_count}개 | "
+                        f"1배 노출: {exposure_pct:.1f}% | "
+                        f"BTC: ${btc_price:,.0f}"
+                    )
                     last_heartbeat_time = current_time
                 
                 # ========================================
