@@ -231,7 +231,8 @@ class BinanceSniperBot:
             print(f"❌ 계좌 업데이트 오류: {e}")
             return 0, 0, 0.0
 
-     async def get_market_metrics(self, symbol):
+    # (주의) 앞에 공백 4칸이 반드시 있어야 합니다.
+    async def get_market_metrics(self, symbol):
         """지표 계산 (15m ATR, 3m RSI, 1m RSI, BB)"""
         try:
             # 1. 15m (ATR)
