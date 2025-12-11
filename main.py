@@ -267,7 +267,9 @@ class BinanceSniperBot:
                 'bb_high': bb_high,
                 'price': current_price
             }
-        except Exception:
+        except Exception as e:
+            # [추가] 에러 내용을 로그에 찍어야 원인을 알 수 있음
+            print(f"⚠️ 지표 계산 실패 ({symbol}): {e}")
             return None
 
     def calc_qty_from_usdt(self, symbol, usdt_val, price):
