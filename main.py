@@ -240,8 +240,11 @@ class BinanceSniperBot:
             if not k_15m: return None
             
             df_15m = pd.DataFrame(k_15m).iloc[:, :6]
-            df_15m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
-            df_15m[['h', 'l', 'c']] = df_15m[['h', 'l', 'c']].astype(float)
+            # [수정] pandas-ta가 인식할 수 있도록 컬럼명을 풀네임으로 변경
+            df_15m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+            df_15m[['high', 'low', 'close']] = df_15m[['high', 'low', 'close']].astype(float)
+            
+            # 이제 컬럼을 명시하지 않아도 알아서 찾음
             atr = df_15m.ta.atr(length=ATR_PERIOD).iloc[-1]
             
             # 2. 3m (RSI)
@@ -249,8 +252,8 @@ class BinanceSniperBot:
             if not k_3m: return None
             
             df_3m = pd.DataFrame(k_3m).iloc[:, :6]
-            df_3m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
-            df_3m['c'] = df_3m['c'].astype(float)
+            df_3m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+            df_3m['close'] = df_3m['close'].astype(float)
             rsi_3m = df_3m.ta.rsi(length=14).iloc[-1]
             
             # 3. 1m (RSI & BB)
@@ -258,21 +261,20 @@ class BinanceSniperBot:
             if not k_1m: return None
             
             df_1m = pd.DataFrame(k_1m).iloc[:, :6]
-            df_1m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
-            df_1m['c'] = df_1m['c'].astype(float)
+            df_1m.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+            df_1m['close'] = df_1m['close'].astype(float)
             
             rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
             
-            # [수정] BB 컬럼 이름 자동 찾기 (버전 호환성 확보)
+            # BB 계산
             bb = df_1m.ta.bbands(length=20, std=2.0)
             
-            # BB 결과 컬럼명은 보통 [BBL_..., BBM_..., BBU_...] 순서임
-            # 첫 번째(하단), 세 번째(상단) 컬럼을 가져오면 됨
+            # BB 컬럼 찾기
             bb_cols = bb.columns.tolist()
-            bb_low = bb[bb_cols[0]].iloc[-1]  # 하단 밴드 (BBL)
-            bb_high = bb[bb_cols[2]].iloc[-1] # 상단 밴드 (BBU)
+            bb_low = bb[bb_cols[0]].iloc[-1]
+            bb_high = bb[bb_cols[2]].iloc[-1]
             
-            current_price = float(df_1m['c'].iloc[-1])
+            current_price = float(df_1m['close'].iloc[-1])
             
             return {
                 'atr': atr,
@@ -283,7 +285,6 @@ class BinanceSniperBot:
                 'price': current_price
             }
         except Exception as e:
-            # 에러 로그에 심볼 이름 추가
             print(f"⚠️ 지표 계산 실패 ({symbol}): {e}")
             return None
 
