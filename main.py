@@ -231,15 +231,14 @@ class BinanceSniperBot:
             print(f"❌ 계좌 업데이트 오류: {e}")
             return 0, 0, 0.0
 
-    async def get_market_metrics(self, symbol):
+     async def get_market_metrics(self, symbol):
         """지표 계산 (15m ATR, 3m RSI, 1m RSI, BB)"""
         try:
             # 1. 15m (ATR)
             k_15m = await self.client.futures_klines(symbol=symbol, interval='15m', limit=30)
-            if not k_15m: return None # 데이터 없으면 리턴
+            if not k_15m: return None
             
-            # [수정] 컬럼 이름 없이 먼저 생성 후 필요한 것만 선택 (안전)
-            df_15m = pd.DataFrame(k_15m).iloc[:, :6] 
+            df_15m = pd.DataFrame(k_15m).iloc[:, :6]
             df_15m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
             df_15m[['h', 'l', 'c']] = df_15m[['h', 'l', 'c']].astype(float)
             atr = df_15m.ta.atr(length=ATR_PERIOD).iloc[-1]
@@ -260,11 +259,17 @@ class BinanceSniperBot:
             df_1m = pd.DataFrame(k_1m).iloc[:, :6]
             df_1m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
             df_1m['c'] = df_1m['c'].astype(float)
+            
             rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
             
+            # [수정] BB 컬럼 이름 자동 찾기 (버전 호환성 확보)
             bb = df_1m.ta.bbands(length=20, std=2.0)
-            bb_low = bb['BBL_20_2.0'].iloc[-1]
-            bb_high = bb['BBU_20_2.0'].iloc[-1]
+            
+            # BB 결과 컬럼명은 보통 [BBL_..., BBM_..., BBU_...] 순서임
+            # 첫 번째(하단), 세 번째(상단) 컬럼을 가져오면 됨
+            bb_cols = bb.columns.tolist()
+            bb_low = bb[bb_cols[0]].iloc[-1]  # 하단 밴드 (BBL)
+            bb_high = bb[bb_cols[2]].iloc[-1] # 상단 밴드 (BBU)
             
             current_price = float(df_1m['c'].iloc[-1])
             
@@ -277,7 +282,7 @@ class BinanceSniperBot:
                 'price': current_price
             }
         except Exception as e:
-            # [추가] 에러 내용을 로그에 찍어야 원인을 알 수 있음
+            # 에러 로그에 심볼 이름 추가
             print(f"⚠️ 지표 계산 실패 ({symbol}): {e}")
             return None
 
