@@ -1,5 +1,5 @@
 python-binance==1.0.19
-pandas==2.2.0
+pandas==2.2.3
 pandas-ta==0.3.14b0
 aiohttp==3.9.3
-numpy==1.26.4
+numpy==2.2.3
