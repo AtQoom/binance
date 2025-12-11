@@ -234,22 +234,31 @@ class BinanceSniperBot:
     async def get_market_metrics(self, symbol):
         """지표 계산 (15m ATR, 3m RSI, 1m RSI, BB)"""
         try:
-            # API 요청 최적화를 위해 gather 사용 가능하지만, 안정성을 위해 순차 호출
             # 1. 15m (ATR)
             k_15m = await self.client.futures_klines(symbol=symbol, interval='15m', limit=30)
-            df_15m = pd.DataFrame(k_15m, columns=['t','o','h','l','c','v','x','y','z','w','k','l'])
-            df_15m[['h','l','c']] = df_15m[['h','l','c']].astype(float)
+            if not k_15m: return None # 데이터 없으면 리턴
+            
+            # [수정] 컬럼 이름 없이 먼저 생성 후 필요한 것만 선택 (안전)
+            df_15m = pd.DataFrame(k_15m).iloc[:, :6] 
+            df_15m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
+            df_15m[['h', 'l', 'c']] = df_15m[['h', 'l', 'c']].astype(float)
             atr = df_15m.ta.atr(length=ATR_PERIOD).iloc[-1]
             
             # 2. 3m (RSI)
             k_3m = await self.client.futures_klines(symbol=symbol, interval='3m', limit=30)
-            df_3m = pd.DataFrame(k_3m, columns=['t','o','h','l','c','v','x','y','z','w','k','l'])
+            if not k_3m: return None
+            
+            df_3m = pd.DataFrame(k_3m).iloc[:, :6]
+            df_3m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
             df_3m['c'] = df_3m['c'].astype(float)
             rsi_3m = df_3m.ta.rsi(length=14).iloc[-1]
             
             # 3. 1m (RSI & BB)
             k_1m = await self.client.futures_klines(symbol=symbol, interval='1m', limit=30)
-            df_1m = pd.DataFrame(k_1m, columns=['t','o','h','l','c','v','x','y','z','w','k','l'])
+            if not k_1m: return None
+            
+            df_1m = pd.DataFrame(k_1m).iloc[:, :6]
+            df_1m.columns = ['t', 'o', 'h', 'l', 'c', 'v']
             df_1m['c'] = df_1m['c'].astype(float)
             rsi_1m = df_1m.ta.rsi(length=14).iloc[-1]
             
