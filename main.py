@@ -143,8 +143,15 @@ class BinanceSniperBot:
         # 1. 거래소 정보 로드
         info = await self.client.futures_exchange_info()
         count = 0
+        
+        # [제외할 코인 목록] 변동성 없는 스테이블 코인들
+        exclude_coins = ['USDCUSDT', 'USDPUSDT', 'FDUSDUSDT', 'BUSDUSDT'] 
+        
         for s in info['symbols']:
             if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING' and s['contractType'] == 'PERPETUAL':
+                # [추가] 스테이블 코인 페어 제외
+                if s['symbol'] in exclude_coins: continue
+                
                 self.symbols.append(s['symbol'])
                 
                 # 필터 정보 파싱 (정밀도)
@@ -168,10 +175,7 @@ class BinanceSniperBot:
                 }
                 count += 1
         
-        print(f"✅ 거래 가능 심볼 로드: {count}개")
-        
-        # 2. 레버리지 설정 (전체 심볼은 너무 오래 걸리므로 생략하거나, 진입 시점에 설정)
-        # 실제 운영 시에는 별도 스크립트로 주요 심볼 레버리지를 미리 10배로 세팅해두는 것이 좋습니다.
+        print(f"✅ 거래 가능 심볼 로드: {count}개 (스테이블 제외됨)")
 
     async def update_account_data(self):
         """계좌 잔고 및 포지션 동기화 (핵심)"""
