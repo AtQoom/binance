@@ -462,7 +462,7 @@ class BinanceSniperBot:
             print(f"⚠️ TP 갱신 오류 {symbol}: {e}")
 
     async def run_loop(self):
-        """메인 실행 루프 (Smart Scan 적용: 기존 기능 + 밴 방지 로직)"""
+        """메인 실행 루프 (Smart Scan 적용: 3분 주기 선별 + 3초 주기 집중 감시)"""
         await self.initialize()
         print(f"🚀 ATR Sniper Bot 가동 시작! (Target: {INITIAL_ENTRY_PCT*100}% Entry / Max {SYMBOL_LIMIT} Symbols)")
         
@@ -472,9 +472,9 @@ class BinanceSniperBot:
         RSI_3M_LONG = 30
         RSI_3M_SHORT = 70
         
-        # [추가] 밴 방지를 위한 루프 주기 설정
-        FAST_SCAN_INTERVAL = 3.0    # 3초마다 정밀 검사
-        SLOW_SCAN_INTERVAL = 180.0  # 3분마다 전체 스캔
+        # [Smart Scan 설정]
+        FAST_SCAN_INTERVAL = 3.0    # 3초마다 정밀 검사 (집중 감시)
+        SLOW_SCAN_INTERVAL = 180.0  # 3분마다 전체 스캔 (관심종목 갱신)
         
         last_heartbeat_time = time.time()
         HEARTBEAT_INTERVAL = 300  # 5분
@@ -496,24 +496,27 @@ class BinanceSniperBot:
                     continue
 
                 # ========================================================
-                # [신규 추가] 3분마다 전체 종목 스캔 -> 관심종목(Watch List) 갱신
+                # [Smart Scan Core] 3분마다 전체 종목 스캔 -> 관심종목(Watch List) 갱신
                 # ========================================================
                 if time.time() - self.last_slow_scan > SLOW_SCAN_INTERVAL:
-                    print("🔍 [Slow Scan] 전체 시장 스캔 중... (관심종목 갱신)")
+                    print("🔍 [Slow Scan] 전체 시장 스캔 중... (관심종목 선별)")
                     new_watch = set()
                     
-                    # 5개씩 끊어서 요청 (API 부하 방지)
+                    # 5개씩 끊어서 요청 (API 부하 분산)
                     chunk_size = 5
                     for i in range(0, len(self.symbols), chunk_size):
                         chunk = self.symbols[i:i+chunk_size]
+                        # 병렬 처리로 3분봉 RSI 확인
                         tasks = [self.scan_3m_rsi(s) for s in chunk]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
+                        
                         for sym, hit in zip(chunk, results):
                             if hit is True: new_watch.add(sym)
-                        await asyncio.sleep(0.5)
+                        
+                        await asyncio.sleep(0.5) # API 밴 방지용 딜레이
 
                     self.watch_list = new_watch
-                    print(f"📋 관심종목 업데이트: {len(self.watch_list)}개")
+                    print(f"📋 관심종목 업데이트 완료: {len(self.watch_list)}개")
                     self.last_slow_scan = time.time()
 
                 current_pos_count = len(self.positions)
@@ -544,8 +547,7 @@ class BinanceSniperBot:
                     last_heartbeat_time = current_time
 
                 # 3. [Fast Scan] 감시 대상 설정
-                # 기존에는 `scan_candidates`에서 무작위 10개를 뽑았지만,
-                # 이제는 `watch_list` + `보유종목` 중에서 뽑습니다.
+                # 감시 대상 = [관심종목] + [현재 보유 종목]
                 target_pool = list(self.watch_list.union(set(self.positions.keys())))
                 
                 # 감시할 종목이 없으면 그냥 대기
@@ -557,12 +559,20 @@ class BinanceSniperBot:
                 scan_batch = target_pool
                 if len(target_pool) > 10:
                     import random
-                    scan_batch = random.sample(target_pool, 10)
+                    # 보유 종목은 반드시 포함
+                    holding = list(self.positions.keys())
+                    others = list(self.watch_list - set(holding))
+                    
+                    # 10개 채우기 (보유종목 우선)
+                    scan_batch = holding[:]
+                    if len(scan_batch) < 10:
+                        needed = 10 - len(scan_batch)
+                        if others:
+                            scan_batch.extend(random.sample(others, min(len(others), needed)))
                 
                 # ========================================
                 # A. 보유 포지션 관리 (기존 로직 100% 동일)
                 # ========================================
-                # scan_batch에 있는 종목 중, 내 포지션인 것만 처리
                 for sym in scan_batch:
                     if sym not in self.positions: continue
                     
@@ -613,7 +623,6 @@ class BinanceSniperBot:
                 # B. 신규 진입 스캔 (기존 로직 100% 동일)
                 # ========================================
                 if current_pos_count < SYMBOL_LIMIT:
-                    # scan_batch 중에서 포지션 없는 종목만 검사
                     for sym in scan_batch:
                         if len(self.positions) >= SYMBOL_LIMIT: break
                         if sym in self.positions: continue # 이미 처리함
@@ -713,7 +722,7 @@ class BinanceSniperBot:
                 print(f"❌ Main Loop Error: {e}")
                 await asyncio.sleep(5)
             
-            # 루프 딜레이 (기존 SCAN_INTERVAL 대신 FAST_SCAN_INTERVAL 사용)
+            # Smart Scan 딜레이 (3초)
             await asyncio.sleep(FAST_SCAN_INTERVAL)
 
 if __name__ == "__main__":
