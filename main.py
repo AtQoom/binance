@@ -35,7 +35,7 @@ if not API_KEY or not API_SECRET:
     sys.exit(1)
 
 # ==========================================
-# 📊 1. 전략 파라미터
+# 📊 1. 전략 파라미터 (RSI 업데이트됨)
 # ==========================================
 # 1. 심볼 및 리스크
 SYMBOL_LIMIT = 3            
@@ -43,14 +43,17 @@ LEVERAGE = 10
 INITIAL_ENTRY_PCT = 0.05    
 MIN_NOTIONAL = 6.0          
 
-# 2. 진입 필터 (Sniper Entry)
-RSI_3M_LONG = 25
-RSI_3M_SHORT = 75
-RSI_1M_LONG_TH = 10
-RSI_1M_SHORT_TH = 90
+# 2. 진입 필터 (Sniper Entry) - [수정 완료]
+RSI_3M_LONG = 30        # (수정됨: 25 -> 30)
+RSI_3M_SHORT = 70       # (수정됨: 75 -> 70)
+RSI_1M_LONG_TH = 16     # (수정됨: 10 -> 16)
+RSI_1M_SHORT_TH = 84    # (수정됨: 90 -> 84)
+
+# 3. 기울기 (Impulse) 조건
+# (ATR 대비 3배 이상의 급격한 가격 변화 = 급격한 기울기)
 IMPULSE_MULTIPLIER = 3.0    
 
-# 3. 물타기(DCA) & 익절(TP)
+# 4. 물타기(DCA) & 익절(TP)
 ATR_PERIOD = 14
 DCA_MULTIPLIER = 2.0        
 MAX_DCA_COUNT = 3           
@@ -58,7 +61,7 @@ DCA_ATR_GAPS = [3.0, 5.0, 7.0]
 TP_ATR_MULT = 2.5           
 MIN_TP_PCT = 0.01           
 
-# 4. 시스템 설정
+# 5. 시스템 설정
 STATE_FILE = "bot_state.json"
 HISTORY_LIMIT = 400         # 초기 로딩 캔들 수
 MEMORY_MAX_LEN = 1000       # 메모리 유지 갯수
@@ -133,10 +136,8 @@ class HybridSniperBot:
     async def refresh_exchange_info(self, is_init=False, target_symbol=None):
         """심볼 정보 갱신 (1시간 주기 or 에러 시 긴급)"""
         try:
-            # 타겟이 있으면 해당 심볼만(긴급), 없으면 전체(정기)
             info = await self.client.futures_exchange_info()
             
-            # 필터링 조건
             exclude = ['USDCUSDT', 'USDPUSDT', 'FDUSDUSDT', 'BUSDUSDT', 'TUSDUSDT']
             now_ms = time.time() * 1000
             new_list_ms = 14 * 24 * 3600 * 1000
@@ -146,14 +147,12 @@ class HybridSniperBot:
                 sym = s['symbol']
                 if target_symbol and sym != target_symbol: continue
 
-                # 필터 적용
                 if s['quoteAsset'] != 'USDT' or s['status'] != 'TRADING': continue
                 if sym in exclude: continue
                 if s.get('onboardDate') and (now_ms - s['onboardDate'] < new_list_ms): continue
 
                 if not target_symbol: temp_symbols.append(sym)
 
-                # 정밀도 파싱
                 prec_qty = 0
                 prec_price = 0
                 min_qty = 0.0
@@ -180,7 +179,6 @@ class HybridSniperBot:
         """🐢 웜업: 과거 데이터 로딩 (REST)"""
         print("🔥 [Warmup] 과거 데이터 로딩 시작 (Safe Mode)...")
         total = len(self.symbols)
-        # 포지션 보유 종목 우선 로딩
         priority = list(self.state.data.keys())
         others = [s for s in self.symbols if s not in priority]
         
@@ -197,7 +195,6 @@ class HybridSniperBot:
                     self.ready_symbols.add(sym)
             except: pass
             
-            # 밴 방지 딜레이
             await asyncio.sleep(0.5) 
             if idx > 0 and idx % 50 == 0:
                 print(f"⏳ 로딩 중... {idx}/{total}")
@@ -225,22 +222,20 @@ class HybridSniperBot:
             'close': float(k['c']), 'volume': float(k['v'])
         }], index=[row_time])
 
-        # 메모리 업데이트
         if sym not in self.klines: self.klines[sym] = new_row
         else:
             if not self.klines[sym].empty and self.klines[sym].index[-1] == row_time:
                 self.klines[sym].update(new_row)
             else:
                 self.klines[sym] = pd.concat([self.klines[sym], new_row])
-                if len(self.klines[sym]) > MEMORY_MAX_LEN: # 꼬리 자르기
+                if len(self.klines[sym]) > MEMORY_MAX_LEN:
                     self.klines[sym] = self.klines[sym].iloc[-MEMORY_MAX_LEN:]
 
         if sym in self.ready_symbols:
             await self.check_strategy(sym, float(k['c']))
 
     async def check_strategy(self, sym, current_price):
-        """🧠 전략 코어"""
-        # 쿨다운 체크
+        """🧠 전략 코어 (기울기/RSI 체크)"""
         if sym in self.cooldowns:
             if time.time() < self.cooldowns[sym]: return
             del self.cooldowns[sym]
@@ -255,7 +250,7 @@ class HybridSniperBot:
             bb_low, bb_high = bb.iloc[-1, 0], bb.iloc[-1, 2]
             atr_1m = df_1m.ta.atr(length=14).iloc[-1]
             
-            # Resampling (3m, 15m)
+            # Resampling
             df_3m = self.resample_data(df_1m, '3min')
             if len(df_3m) < 14: return
             rsi_3m = df_3m.ta.rsi(length=14).iloc[-1]
@@ -267,48 +262,45 @@ class HybridSniperBot:
             # --- 로직 실행 ---
             pos = self.positions.get(sym)
             
-            # [A] 보유 중: DCA & TP
+            # [A] 보유 중
             if pos:
                 await self.manage_position(sym, pos, current_price, atr_15m, rsi_1m, bb_low, bb_high)
             
-            # [B] 미보유: 신규 진입
+            # [B] 미보유: 신규 진입 (기울기 포함)
             else:
                 if len(self.positions) >= SYMBOL_LIMIT: return
                 
                 open_p = df_1m['open'].iloc[-1]
-                move = open_p - current_price # 양수=하락
+                move = open_p - current_price 
                 
                 is_candidate = False
                 
-                # LONG (과매도 + BB하단 + 급락)
+                # LONG: RSI + BB + 급락(기울기)
                 if (rsi_3m < RSI_3M_LONG and current_price < bb_low and 
                     rsi_1m < RSI_1M_LONG_TH and move > (atr_1m * IMPULSE_MULTIPLIER)):
                     
-                    print(f"🚀 [SIGNAL] {sym} LONG (R3:{rsi_3m:.1f} R1:{rsi_1m:.1f})")
+                    print(f"🚀 [SIGNAL] {sym} LONG (R3:{rsi_3m:.1f} R1:{rsi_1m:.1f} Move:{move:.2f})")
                     await self.execute_entry(sym, 'LONG', current_price, atr_15m)
                     is_candidate = True
 
-                # SHORT (과매수 + BB상단 + 급등)
+                # SHORT: RSI + BB + 급등(기울기)
                 elif (rsi_3m > RSI_3M_SHORT and current_price > bb_high and 
                       rsi_1m > RSI_1M_SHORT_TH and (-move) > (atr_1m * IMPULSE_MULTIPLIER)):
                     
-                    print(f"🚀 [SIGNAL] {sym} SHORT (R3:{rsi_3m:.1f} R1:{rsi_1m:.1f})")
+                    print(f"🚀 [SIGNAL] {sym} SHORT (R3:{rsi_3m:.1f} R1:{rsi_1m:.1f} Move:{move:.2f})")
                     await self.execute_entry(sym, 'SHORT', current_price, atr_15m)
                     is_candidate = True
                 
-                # 후보군 카운팅
                 if not is_candidate and (rsi_3m < RSI_3M_LONG or rsi_3m > RSI_3M_SHORT):
                     self.candidates += 1
 
         except: pass
 
     async def manage_position(self, sym, pos, price, atr, rsi_1m, bb_low, bb_high):
-        """포지션 관리 (물타기 & TP갱신)"""
-        # 1. TP(익절) 주문 주기적 갱신
+        """포지션 관리"""
         if time.time() - self.last_tp_update.get(sym, 0) > TP_UPDATE_INTERVAL:
             await self.update_tp_order(sym, pos, atr)
 
-        # 2. DCA(물타기)
         dca_cnt = pos['dca']
         if dca_cnt >= MAX_DCA_COUNT: return
         
@@ -341,25 +333,18 @@ class HybridSniperBot:
             qty = self.calc_qty(sym, val, price)
             if qty == 0: return
 
-            # 주문 실행
             order_side = 'BUY' if side == 'LONG' else 'SELL'
             if await self.execute_order(sym, order_side, qty):
                 self.state.update(sym, side, 0)
-                
-                # [중요] 중복 진입 방지를 위한 임시 포지션 등록 (Sync 전까지 방어)
-                self.positions[sym] = {
-                    'symbol': sym, 'side': side, 'amount': qty, 
-                    'entry': price, 'dca': 0
-                }
-                
-                # 즉시 TP 설정
+                # 중복 방지
+                self.positions[sym] = {'symbol': sym, 'side': side, 'amount': qty, 'entry': price, 'dca': 0}
                 await self.update_tp_order(sym, self.positions[sym], atr)
                 
         except Exception as e:
             print(f"⚠️ 진입 실패 {sym}: {e}")
 
     async def execute_order(self, sym, side, qty, is_dca=False, reduce_only=False):
-        """주문 실행 (자가 치유 기능 포함)"""
+        """주문 실행"""
         try:
             if not is_dca and not reduce_only:
                 try:
@@ -378,35 +363,30 @@ class HybridSniperBot:
 
         except BinanceAPIException as e:
             print(f"❌ 주문 오류 {sym}: {e}")
-            # [자가 치유] 정밀도/필터 오류 시 정보 갱신
             if e.code in [-1013, -1111]:
                 print(f"🔧 {sym} 정보 긴급 갱신")
                 await self.refresh_exchange_info(target_symbol=sym)
-            
-            self.cooldowns[sym] = time.time() + 300 # 5분 쿨다운
+            self.cooldowns[sym] = time.time() + 300 
             return False
         except: return False
 
     async def update_tp_order(self, symbol, pos, atr):
-        """TP(익절) Limit 주문 갱신"""
+        """TP 주문 갱신"""
         try:
-            entry = pos.get('entry_price', pos.get('entry', 0)) # 키 호환성
+            entry = pos.get('entry_price', pos.get('entry', 0))
             qty = pos['amount']
             side = pos['side']
             
-            # 목표가 계산 (평단 + 2.5 ATR)
             min_profit = entry * MIN_TP_PCT
             target_profit = max(atr * TP_ATR_MULT, min_profit)
             
             tp_price = entry + target_profit if side == 'LONG' else entry - target_profit
             
-            # 정밀도 보정
             prec = self.symbol_info[symbol]['price_prec']
             tp_price = round(tp_price, prec)
             
             tp_side = 'SELL' if side == 'LONG' else 'BUY'
             
-            # 기존 주문 취소 후 재설정
             await self.client.futures_cancel_all_open_orders(symbol=symbol)
             await self.client.futures_create_order(
                 symbol=symbol, side=tp_side, type='LIMIT', 
@@ -418,7 +398,7 @@ class HybridSniperBot:
         except: pass
 
     def calc_qty(self, sym, usdt, price):
-        """수량 계산 (정밀도)"""
+        """수량 계산"""
         if usdt < MIN_NOTIONAL: return 0.0
         info = self.symbol_info.get(sym)
         if not info: return 0.0
@@ -430,7 +410,7 @@ class HybridSniperBot:
         return qty if qty >= info['min_qty'] else 0.0
 
     async def sync_account(self):
-        """계좌 동기화 (10초 주기)"""
+        """계좌 동기화"""
         while True:
             try:
                 acc = await self.client.futures_account()
@@ -447,8 +427,6 @@ class HybridSniperBot:
                         }
                 
                 self.positions = real_pos
-                
-                # 청산된 포지션 상태 제거
                 for s in list(self.state.data.keys()):
                     if s not in real_pos: self.state.remove(s)
                     
@@ -456,12 +434,11 @@ class HybridSniperBot:
             await asyncio.sleep(10)
 
     async def scheduled_tasks(self):
-        """정기 작업 (하트비트, 1시간 갱신)"""
+        """정기 작업"""
         while True:
             now = time.time()
             dt = datetime.now()
             
-            # 3분 정각 리포트
             if dt.minute % 3 == 0 and dt.second < 5:
                 if now - self.last_heartbeat > 60:
                     print(
@@ -473,7 +450,6 @@ class HybridSniperBot:
                     self.candidates = 0
                     self.last_heartbeat = now
             
-            # 1시간 심볼 갱신
             if int(now) % REFRESH_INTERVAL == 0:
                 await self.refresh_exchange_info()
                 
@@ -482,12 +458,10 @@ class HybridSniperBot:
     async def run(self):
         await self.initialize()
         
-        # 소켓 연결
         self.bm = BinanceSocketManager(self.client)
         streams = [f"{s.lower()}@kline_1m" for s in self.symbols]
         ts = self.bm.multiplex_socket(streams)
         
-        # 백그라운드 실행
         asyncio.create_task(self.slow_warmup_worker())
         asyncio.create_task(self.sync_account())
         asyncio.create_task(self.scheduled_tasks())
